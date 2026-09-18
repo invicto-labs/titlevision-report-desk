@@ -7,11 +7,29 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]));import server
 class ServerTests(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
-  server.initialize();cls.http=server.ThreadingHTTPServer(('127.0.0.1',0),server.Handler);server.PORT=cls.http.server_port;cls.url=f'http://127.0.0.1:{server.PORT}';threading.Thread(target=cls.http.serve_forever,daemon=True).start()
+  server.initialize();cls.http=server.ReportHTTPServer(('127.0.0.1',0),server.Handler);server.PORT=cls.http.server_port;cls.url=f'http://127.0.0.1:{server.PORT}';threading.Thread(target=cls.http.serve_forever,daemon=True).start()
  @classmethod
  def tearDownClass(cls):cls.http.shutdown();cls.http.server_close()
  def test_credential_roundtrip(self):
   server.store_credentials('test-user','test-only-password');self.assertEqual(server.credentials()['username'],'test-user');self.assertNotIn(b'test-only-password',(server.DATA/'credentials.dpapi').read_bytes());self.assertNotIn('password',json.dumps(server.public_state()))
+ def test_health_is_independent_of_report_database(self):
+  with patch.object(server,'db',side_effect=RuntimeError('database busy')):
+   with urllib.request.urlopen(self.url+'/api/health') as response:value=json.load(response)
+  self.assertTrue(value['ready']);self.assertEqual(value['processId'],os.getpid());self.assertNotIn('csrf',value)
+ def test_windows_exclusive_listener_prevents_duplicate_engine(self):
+  if os.name!='nt':self.skipTest('Windows socket ownership')
+  with self.assertRaises(OSError):server.ThreadingHTTPServer(('127.0.0.1',server.PORT),server.Handler)
+ def test_exclusive_port_can_restart_after_completed_request(self):
+  from http.server import BaseHTTPRequestHandler
+  class Handler(BaseHTTPRequestHandler):
+   def log_message(self,*args):pass
+   def do_GET(self):self.send_response(200);self.end_headers();self.wfile.write(b'ok')
+  first=server.ReportHTTPServer(('127.0.0.1',0),Handler);port=first.server_port
+  thread=threading.Thread(target=first.serve_forever,daemon=True);thread.start()
+  try:
+   with urllib.request.urlopen('http://127.0.0.1:'+str(port),timeout=3) as response:self.assertEqual(response.read(),b'ok')
+  finally:first.shutdown();first.server_close();thread.join(timeout=3)
+  second=server.ReportHTTPServer(('127.0.0.1',port),Handler);second.server_close()
  def test_lock_blocks_overlap(self):
   with server.RunLock():
    with self.assertRaises(ValueError):

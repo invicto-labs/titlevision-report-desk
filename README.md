@@ -38,6 +38,9 @@ Activation failures show the specific reason. Each attempt saves its result, and
 report-engine startup logs are kept under the local data directory's `updates` folder.
 Local restart checks bypass HTTP proxy settings. Conflicting services are reported
 with their process IDs and are never force-closed by the installer.
+The Windows engine owns its socket exclusively, so another copy cannot share its
+port. Updates check for conflicting listeners before stopping the previous engine,
+then verify the new process using a database-independent readiness endpoint.
 
 For private releases, a PC can reuse Git's existing sign-in as `invicto-labs`, or
 use a fine-grained GitHub token with **Contents: read** permission on this repository,

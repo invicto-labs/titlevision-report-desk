@@ -34,7 +34,7 @@ class ActivationTests(unittest.TestCase):
  def test_failed_new_engine_still_restarts_old_engine_if_schedule_rollback_fails(self):
   old=TEST/'old-version';old.mkdir(exist_ok=True)
   new_process=Mock();new_process.poll.return_value=1
-  with patch.object(activation,'state',side_effect=[{'processId':123,'edition':'portable-1','runs':[]},OSError('starting')]),patch.object(activation,'verify_process'),patch.object(activation,'schedule',side_effect=[None,RuntimeError('schedule restore denied')]),patch.object(activation.subprocess,'run'),patch.object(activation,'python_start',side_effect=[new_process,Mock()]) as start,patch.object(activation,'startup_failure',return_value='New engine startup failed'):
+  with patch.object(activation,'state',return_value={'processId':123,'edition':'portable-1','runs':[]}),patch.object(activation,'verify_process'),patch.object(activation,'listener_pids',return_value={123}),patch.object(activation,'schedule',side_effect=[None,RuntimeError('schedule restore denied')]),patch.object(activation.subprocess,'run'),patch.object(activation,'python_start',side_effect=[new_process,Mock()]) as start,patch.object(activation,'wait_ready',side_effect=RuntimeError('New engine startup failed')):
    with self.assertRaisesRegex(RuntimeError,'New engine startup failed.*schedule restore denied'):activation.activate(123,old)
   self.assertEqual(start.call_count,2);self.assertEqual(start.call_args.args[0],old.resolve())
  def test_startup_log_provides_the_underlying_failure(self):
@@ -45,6 +45,22 @@ class ActivationTests(unittest.TestCase):
   with patch.object(activation,'state',return_value={'processId':999,'edition':'portable-1','runs':[]}),patch.object(activation.subprocess,'run') as stop:
    with self.assertRaisesRegex(RuntimeError,'different application'):activation.activate(123,TEST)
    stop.assert_not_called()
+ def test_duplicate_listeners_are_detected_before_stopping_the_old_engine(self):
+  with patch.object(activation,'state',return_value={'processId':123,'edition':'portable-1','runs':[]}),patch.object(activation,'verify_process'),patch.object(activation,'listener_pids',return_value={123,456}),patch.object(activation.subprocess,'run') as stop:
+   with self.assertRaisesRegex(RuntimeError,'process IDs: 123, 456'):activation.activate(123,TEST)
+   stop.assert_not_called()
+ def test_readiness_waits_for_the_exact_new_engine(self):
+  process=Mock(pid=456);process.poll.return_value=None
+  wrong={'ready':True,'edition':'portable-1','version':activation.version,'processId':123}
+  right=dict(wrong,processId=456)
+  with patch.object(activation,'health',side_effect=[OSError('starting'),wrong,right]) as health,patch.object(activation.time,'sleep'):
+   activation.wait_ready(process)
+  self.assertEqual(health.call_count,3)
+ def test_failed_readiness_reports_the_actual_responding_process(self):
+  process=Mock(pid=456);process.poll.return_value=None
+  wrong={'ready':True,'edition':'portable-1','version':'old','processId':123}
+  with patch.object(activation,'health',return_value=wrong),patch.object(activation.time,'monotonic',side_effect=[0,0,100]),patch.object(activation.time,'sleep'),patch.object(activation,'startup_failure',return_value='Engine not ready'):
+   with self.assertRaisesRegex(RuntimeError,'returned version old / process 123'):activation.wait_ready(process)
  def test_installer_surfaces_attempt_error_and_stderr_fallback(self):
   # Compile the real installer helper; use a test entry point, without installing.
   harness=TEST/'ActivationTests.cs'

@@ -16,6 +16,22 @@ def status(phase,message):
  temp=data/('update-'+uuid.uuid4().hex+'.tmp');temp.write_text(payload,encoding='utf8');temp.replace(data/'update-status.json')
 def state():
  with local_http.open('http://127.0.0.1:8765/api/state',timeout=3) as response:return json.load(response)
+
+def health():
+ with local_http.open('http://127.0.0.1:8765/api/health',timeout=2) as response:return json.load(response)
+
+def wait_ready(process,timeout=90):
+ deadline=time.monotonic()+timeout;last='No readiness response'
+ while time.monotonic()<deadline:
+  try:
+   current=health()
+   if current.get('ready') is True and current.get('edition')=='portable-1' and current.get('version')==version and current.get('processId')==process.pid:return
+   last='Expected version '+version+' / process '+str(process.pid)+', but port 8765 returned version '+str(current.get('version'))+' / process '+str(current.get('processId'))
+  except (OSError,ValueError) as error:last=type(error).__name__+': '+str(error)
+  if process.poll() is not None:
+   last+='; the new engine exited with code '+str(process.returncode);break
+  time.sleep(.5)
+ raise RuntimeError(startup_failure(process)+' Readiness check: '+last)
 def python_start(folder):
  env=dict(os.environ);env.pop('PYTHONHOME',None);env.pop('PYTHONPATH',None);env.pop('TITLEVISION_DATA',None);env.pop('TITLEVISION_NODE',None);env['TITLEVISION_PORT']='8765'
  logs=data/'updates';logs.mkdir(exist_ok=True)
@@ -31,7 +47,7 @@ def startup_failure(process):
  if log and log.exists():
   lines=log.read_text(encoding='utf8',errors='replace').strip().splitlines()
   if lines:detail=' '+lines[-1][:1000]
- return 'The new version did not start.'+detail+(' Startup log: '+str(log) if log else '')
+ return 'Could not confirm that the new report engine is ready.'+detail+(' Startup log: '+str(log) if log else '')
 def schedule(folder):
  script=folder/'app/server.py'
  flag='--update-schedule-if-enabled'
@@ -59,7 +75,7 @@ def process_path(pid):
  finally:ctypes.windll.kernel32.CloseHandle(handle)
 def verify_process(pid,folder):
  if process_path(pid)!=folder/'runtime/python/pythonw.exe':raise RuntimeError('The process does not belong to the previous Report Desk installation')
-def discover():
+def listener_pids():
  size=wintypes.ULONG(0);fn=ctypes.windll.iphlpapi.GetExtendedTcpTable
  fn(None,ctypes.byref(size),False,2,3,0);buffer=ctypes.create_string_buffer(size.value)
  if fn(buffer,ctypes.byref(size),False,2,3,0):raise RuntimeError('Could not identify the running application')
@@ -68,9 +84,15 @@ def discover():
  for i in range(count):
   row=Row.from_buffer(buffer,4+i*ctypes.sizeof(Row))
   if row.state==2 and socket.ntohs(row.port&65535)==8765 and row.address in (0,0x0100007f):matches.append(row.pid)
- matches=set(matches)
+ return set(matches)
+
+def listener_conflict(matches):
+ return 'Multiple services use port 8765 (process IDs: '+', '.join(map(str,sorted(matches)))+'). The extra service must be closed once before upgrading; no service was stopped'
+
+def discover():
+ matches=listener_pids()
  if not matches:return None
- if len(matches)!=1:raise RuntimeError('Multiple services use port 8765 (process IDs: '+', '.join(map(str,sorted(matches)))+'). Close the extra service before retrying; no service was stopped')
+ if len(matches)!=1:raise RuntimeError(listener_conflict(matches))
  pid=matches.pop();exe=process_path(pid);folder=exe.parents[2]
  if exe!=folder/'runtime/python/pythonw.exe' or not (folder/'app/portable.json').exists():raise RuntimeError('Another application is using port 8765')
  return pid,folder
@@ -85,6 +107,10 @@ def activate(old_pid,old_root):
    if current.get('processId',old_pid)!=old_pid or current.get('edition')!='portable-1':raise RuntimeError('A different application is using the report port')
    if any(r['status'] in {'running','queued'} for r in current['runs']):raise RuntimeError('A report is running. Finish it before updating')
    verify_process(old_pid,old_root)
+   listeners=listener_pids()
+   if listeners!={old_pid}:
+    if len(listeners)>1:raise RuntimeError(listener_conflict(listeners))
+    raise RuntimeError('The service on port 8765 changed before the update; retry Get update. No service was stopped')
    # Preserve the private display-name map outside versioned application files.
    old_names=old_root/'app/templates/names.json'
    if not (data/'names.json').exists() and old_names.exists():(data/'names.json').write_bytes(old_names.read_bytes())
@@ -92,15 +118,8 @@ def activate(old_pid,old_root):
    schedule(root)
    subprocess.run(['taskkill','/PID',str(old_pid),'/F'],capture_output=True,check=True,creationflags=0x08000000);stopped=True
    new_process=python_start(root)
-   for _ in range(60):
-    try:
-     current=state()
-     if current.get('version')==version and current.get('processId')==new_process.pid:
-      status('complete','Updated to version '+version+'. Your settings and reports are preserved.');return
-    except OSError:pass
-    if new_process.poll() is not None:break
-    time.sleep(.5)
-   raise RuntimeError(startup_failure(new_process))
+   wait_ready(new_process)
+   status('complete','Updated to version '+version+'. Your settings and reports are preserved.');return
   except Exception as original:
    if stopped:
     if new_process and new_process.poll() is None:new_process.terminate();new_process.wait(timeout=10)
@@ -122,7 +141,12 @@ def main(arguments):
    existing=discover()
    if existing:activate(*existing)
    else:
-    schedule(root);python_start(root)
+    schedule(root);process=python_start(root)
+    try:wait_ready(process)
+    except Exception:
+     if process.poll() is None:process.terminate();process.wait(timeout=10)
+     raise
+    status('complete','Version '+version+' is ready.')
   else:activate(int(arguments[0]),Path(arguments[1]))
   return 0
  except Exception as error:

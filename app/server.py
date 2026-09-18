@@ -2,7 +2,7 @@
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
 from pathlib import Path
 from datetime import datetime,timedelta,timezone,date
-import base64,ctypes,hashlib,json,os,secrets,sqlite3,subprocess,sys,threading,time,uuid,webbrowser
+import base64,ctypes,hashlib,json,os,secrets,socket,sqlite3,subprocess,sys,threading,time,uuid,webbrowser
 from urllib.parse import urlparse
 from contextlib import contextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parent))
@@ -14,6 +14,23 @@ DATA=Path(os.environ.get('TITLEVISION_DATA',Path(os.environ.get('LOCALAPPDATA',s
 PORT=int(os.environ.get('TITLEVISION_PORT','8765'));IST=timezone(timedelta(hours=5,minutes=30));TOKEN=secrets.token_urlsafe(32)
 NODE=Path(os.environ.get('TITLEVISION_NODE',ROOT.parent/'runtime/node/node.exe' if PORTABLE else Path.home()/'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'))
 CREATE_NO_WINDOW=0x08000000 if os.name=='nt' else 0
+class ReportHTTPServer(ThreadingHTTPServer):
+ # Windows SO_REUSEADDR permits a second listener to steal the same port.
+ # Exclusive ownership keeps requests routed to one verified report engine.
+ allow_reuse_address=os.name!='nt'
+ allow_reuse_port=False
+ def server_bind(self):
+  if os.name=='nt':self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
+  super().server_bind()
+
+def open_http_server():
+ # Let connections from the previous engine close during an update.
+ deadline=time.monotonic()+15
+ while True:
+  try:return ReportHTTPServer(('127.0.0.1',PORT),Handler)
+  except OSError as error:
+   if getattr(error,'winerror',None) not in (10013,10048) or time.monotonic()>=deadline:raise
+   time.sleep(.25)
 @contextmanager
 def db():
  c=sqlite3.connect(DATA/'reporting.sqlite',timeout=30);c.row_factory=sqlite3.Row
@@ -192,6 +209,7 @@ class Handler(BaseHTTPRequestHandler):
  def do_GET(self):
   try:
    self.guard();p=urlparse(self.path).path
+   if p=='/api/health':return self.send(200,{'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'processId':os.getpid(),'ready':True})
    if p=='/api/state':return self.send(200,public_state())
    if p.startswith('/api/main/') and p.endswith('/download'):
     chunks=p.split('/')
@@ -248,6 +266,6 @@ if __name__=='__main__':
  elif '--update-schedule-if-enabled' in sys.argv:
   if setting('schedule',False):install_schedule(True)
  else:
-  http=ThreadingHTTPServer(('127.0.0.1',PORT),Handler);threading.Thread(target=schedule_loop,daemon=True).start();print(f'TitleVision Report Desk: http://127.0.0.1:{PORT}',flush=True)
+  http=open_http_server();threading.Thread(target=schedule_loop,daemon=True).start();print(f'TitleVision Report Desk: http://127.0.0.1:{PORT}',flush=True)
   if '--open' in sys.argv:webbrowser.open(f'http://127.0.0.1:{PORT}')
   http.serve_forever()
