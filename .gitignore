@@ -1,0 +1,12 @@
+work/
+outputs/
+.build/
+**/node_modules/
+**/data/
+**/__pycache__/
+**/tests/results/
+*.dpapi
+*.log
+.env*
+*.sqlite*
+*.exe

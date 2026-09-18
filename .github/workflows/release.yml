@@ -1,0 +1,60 @@
+name: Build and publish Windows release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Verify tag and configure dependencies
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $config = Get-Content app/version.json -Raw | ConvertFrom-Json
+          if ($env:GITHUB_REF_NAME -ne ('v' + $config.version)) { throw 'Tag must match app/version.json' }
+          if ($config.repository -ne $env:GITHUB_REPOSITORY) { throw 'Update repository must match this repository' }
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Python dependency install failed' }
+          npm install --prefix .build --ignore-scripts playwright@1.62.1
+          if ($LASTEXITCODE -ne 0) { throw 'Browser dependency install failed' }
+          $nodeVersion = node --version
+          Invoke-WebRequest "https://raw.githubusercontent.com/nodejs/node/$nodeVersion/LICENSE" -OutFile app/desktop/licenses/Node-LICENSE.txt
+          'TITLEVISION_NODE_EXE=' + (Get-Command node).Source >> $env:GITHUB_ENV
+          'TITLEVISION_NODE_MODULES=' + (Join-Path $env:GITHUB_WORKSPACE '.build/node_modules') >> $env:GITHUB_ENV
+      - name: Test
+        run: |
+          python app/tests/test_server.py
+          if ($LASTEXITCODE -ne 0) { throw 'Server tests failed' }
+          python app/tests/test_updater.py
+          if ($LASTEXITCODE -ne 0) { throw 'Updater tests failed' }
+          node --test --test-isolation=none app/tests/rules.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Rule tests failed' }
+      - name: Build installer
+        run: |
+          python app/desktop/build_full.py
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME 'outputs/TitleVision-Full-Windows-App/TitleVision-Report-Desk-Setup.exe' 'outputs/TitleVision-Full-Windows-App/TitleVision Report Desk Portable.zip' --verify-tag --title "TitleVision Report Desk $env:GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release publishing failed' }
