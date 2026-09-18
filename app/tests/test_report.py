@@ -30,6 +30,9 @@ class ReportTests(unittest.TestCase):
      styles=E.fromstring(z.read('xl/styles.xml'))
      for style in styles.findall('x:tableStyles/x:tableStyle',ns):self.assertFalse(any(k.startswith('{') for k in style.attrib))
      order=[E.QName(c).localname for c in E.fromstring(z.read('xl/workbook.xml'))];self.assertLess(order.index('calcPr'),order.index('pivotCaches'))
-    self.assertEqual(json.loads((folder/'validation.json').read_text())['workbookFormatVersion'],2)
+     cache=E.fromstring(z.read('xl/pivotCache/pivotCacheDefinition1.xml'))
+     for shared in cache.findall('x:cacheFields/x:cacheField/x:sharedItems',ns):
+      if shared.get('count') is not None:self.assertEqual(shared.get('containsBlank')=='1',shared.find('x:m',ns) is not None)
+    self.assertEqual(json.loads((folder/'validation.json').read_text())['workbookFormatVersion'],3)
     print('REPORT_FIXTURE='+str(folder/'report.xlsx'))
 if __name__=='__main__':unittest.main()

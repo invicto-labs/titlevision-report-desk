@@ -162,10 +162,10 @@ def downloadable_report(folder):
  def ready(directory):
   try:
    checked=json.loads((directory/'validation.json').read_text(encoding='utf8'))
-   return checked.get('passed') and checked.get('workbookFormatVersion')==2 and (directory/'report.xlsx').is_file()
+   return checked.get('passed') and checked.get('workbookFormatVersion')==3 and (directory/'report.xlsx').is_file()
   except (OSError,ValueError):return False
  if ready(folder):return folder/'report.xlsx'
- corrected=folder/'workbook-v2'
+ corrected=folder/'workbook-v3'
  if ready(corrected):return corrected/'report.xlsx'
  with RunLock():
   if UPDATES.busy():raise ValueError('The app is updating. Download the report after it restarts.')

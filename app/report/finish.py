@@ -35,7 +35,7 @@ fields=sub(cache,'cacheFields',{'count':str(len(headers))})
 for j,h in enumerate(headers):
  f=sub(fields,'cacheField',{'name':h,'numFmtId':'14' if j in {10,14,15} else '0'})
  vals=[r[j] for r in rows];typed_values=shared.get(j,vals);nonblank=[v for v in typed_values if v is not None and v!=''];attrs={}
- if len(nonblank)<len(vals) and j!=23:attrs['containsBlank']='1'
+ if len(nonblank)<len(typed_values) and j!=23:attrs['containsBlank']='1'
  if not nonblank:attrs.update(containsNonDate='1' if j==23 else '0',containsString='1' if j==23 else '0')
  elif j in {10,14,15}:attrs.update(containsSemiMixedTypes='0',containsNonDate='0',containsDate='1',containsString='0',minDate=iso(min(nonblank)),maxDate=iso(max(nonblank)))
  elif all(isinstance(v,(int,float)) for v in nonblank):attrs.update(containsSemiMixedTypes='0',containsString='0',containsNumber='1',containsInteger='1',minValue=str(min(nonblank)),maxValue=str(max(nonblank)))
@@ -152,4 +152,4 @@ with ZipFile(out) as z:
  for name in z.namelist():
   if name.endswith('.xml') or name.endswith('.rels'): E.fromstring(z.read(name))
 assert collection['count']==len(rows)
-(base/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':2,'count':len(rows),'points':expected_points,'pivots':4,'sourceRowsReconciled':True,'formulasVerified':True}),encoding='utf8')
+(base/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':3,'count':len(rows),'points':expected_points,'pivots':4,'sourceRowsReconciled':True,'formulasVerified':True}),encoding='utf8')

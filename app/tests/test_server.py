@@ -36,7 +36,7 @@ class ServerTests(unittest.TestCase):
   for name in ('payload.json','collection.json'):(folder/name).write_text('{}')
   def rebuild(args,directory,**kwargs):
    (directory/'report.xlsx').write_bytes(b'corrected')
-   (directory/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':2}))
+   (directory/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':3}))
   with patch.object(server,'run_process',side_effect=rebuild) as build:
    corrected=server.downloadable_report(folder)
    self.assertEqual(corrected.read_bytes(),b'corrected');self.assertEqual(build.call_count,2)
