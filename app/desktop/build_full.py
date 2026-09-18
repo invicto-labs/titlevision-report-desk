@@ -15,7 +15,7 @@ def copy(src,dst):
  dst.parent.mkdir(parents=True,exist_ok=True)
  if src.is_dir():shutil.copytree(src,dst,ignore=ignore)
  else:shutil.copy2(src,dst)
-for file in ['server.py','updater.py','update_activate.py','version.json','collector.mjs','rules.mjs','reconcile.py','schedule.ps1','report/prepare.mjs','report/build_portable.py','report/finish.py']:
+for file in ['server.py','main_workbook.py','updater.py','update_activate.py','version.json','collector.mjs','rules.mjs','reconcile.py','schedule.ps1','report/prepare.mjs','report/build_portable.py','report/finish.py']:
  copy(app/file,stage/'app'/file)
 for directory in ['public','templates']:copy(app/directory,stage/'app'/directory)
 (stage/'app/templates/names.json').write_text('{}',encoding='utf8')

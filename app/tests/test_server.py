@@ -25,6 +25,25 @@ class ServerTests(unittest.TestCase):
   req=urllib.request.Request(self.url+'/api/run',b'{}',headers={'Origin':'https://example.org','Content-Type':'application/json','X-CSRF-Token':server.TOKEN})
   with self.assertRaises(urllib.error.HTTPError) as e:urllib.request.urlopen(req)
   self.assertEqual(e.exception.code,400)
+ def test_main_workbook_requires_same_origin_and_explicit_choice(self):
+  path=self.url+'/api/runs/'+'b'*32+'/main'
+  with patch.object(server.main_workbook,'decide') as decide:
+   req=urllib.request.Request(path,b'{"add":true}',headers={'Origin':'https://example.org','X-CSRF-Token':server.TOKEN})
+   with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
+   decide.assert_not_called()
+  req=urllib.request.Request(path,b'{"add":"yes"}',headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN})
+  with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
+ def test_main_choice_is_recorded_and_main_download_has_stable_name(self):
+  rid='c'*32
+  with server.db() as c:c.execute('INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,'2026-01-01','2026-01-01','review','test','now',2,3,1,None))
+  req=urllib.request.Request(self.url+'/api/runs/'+rid+'/main',b'{"add":false}',headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN})
+  with urllib.request.urlopen(req) as response:self.assertEqual(json.load(response)['choice'],'no')
+  state=server.public_state();self.assertEqual(next(r for r in state['runs'] if r['id']==rid)['mainChoice'],'no')
+  report=testdata/'main'/'2026-01'/'test';report.mkdir(parents=True);(report/'report.xlsx').write_bytes(b'workbook')
+  with server.db() as c:c.execute('INSERT INTO main_books VALUES (?,?,?,?,?,?,?,?)',('2026-01',str(report.relative_to(testdata)),'2026-01-01','2026-01-01',2,3,1,'now'))
+  with urllib.request.urlopen(self.url+'/api/main/2026-01/download') as response:
+   self.assertIn('TitleVision Main Error Report - 2026-01.xlsx',response.headers['Content-Disposition']);self.assertEqual(response.read(),b'workbook')
+  with server.db() as c:c.execute('DELETE FROM runs WHERE id=?',(rid,))
  def test_unsafe_host_rejected(self):
   req=urllib.request.Request(self.url+'/api/state',headers={'Host':'attacker.example'})
   with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)

@@ -4,7 +4,7 @@ Requirements: 64-bit Windows 10 or Windows 11, Microsoft Edge, internet access.
 Python, Node.js and the report libraries are included. Codex is not required.
 
 INSTALL
-Run TitleVision Report Desk Full Setup.exe. Click Install. Then use the desktop
+Run TitleVision-Report-Desk-Setup.exe. Click Install. Then use the desktop
 or Start menu shortcut. No administrator access is needed.
 If using the ZIP, select Extract All first, then open TitleVision Report Desk.exe
 inside the extracted folder. Keep the entire extracted folder together.
@@ -30,6 +30,17 @@ Your new computer stores its own reports, settings and Windows-encrypted sign-in
 under %LOCALAPPDATA%\TitleVision Report Desk\data. No saved credentials or old
 reports are included in the download. Existing private staff display-name maps
 are preserved during updates. New PCs can add their own data\names.json map.
+
+MAIN MONTHLY WORKBOOK
+After a report completes, choose Yes to add it to the main monthly workbook, or
+No to leave the main workbook unchanged. Nothing is added automatically, including
+scheduled reports. Select an earlier report in history to make its choice later.
+Each month has one download, with all approved records in the same detail sheet.
+Every error is preserved, even for the same order on the same day or different days.
+Adding a new collection of previously approved dates replaces those dates only;
+repeating the same approval does not add duplicate rows. Summary PivotTables and
+the editable Team/contributor formulas are retained. Download the latest main Excel
+from the app. Edits to downloaded copies are not imported back into the app.
 
 UPDATES
 The Application updates panel shows the running version. Get update downloads

@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from contextlib import contextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from updater import Updates
+import main_workbook
 ROOT=Path(__file__).resolve().parent
 PORTABLE=(ROOT/'portable.json').exists()
 DATA=Path(os.environ.get('TITLEVISION_DATA',Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'TitleVision Report Desk/data' if PORTABLE else ROOT/'data')).resolve();DATA.mkdir(parents=True,exist_ok=True)
@@ -24,6 +25,7 @@ def initialize():
   c.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY,value TEXT NOT NULL)')
   c.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY,start TEXT,end TEXT,status TEXT,message TEXT,created TEXT,count INTEGER,points REAL,issues INTEGER,scheduled_day TEXT)')
   c.execute('CREATE UNIQUE INDEX IF NOT EXISTS scheduled_once ON runs(scheduled_day) WHERE scheduled_day IS NOT NULL')
+  main_workbook.initialize(c)
 def setting(k,default=None):
  with db() as c:r=c.execute('SELECT value FROM settings WHERE key=?',(k,)).fetchone()
  return json.loads(r[0]) if r else default
@@ -155,9 +157,10 @@ def install_schedule(enabled):
  save_setting('schedule',enabled)
 def public_state():
  with db() as c:
-  runs=[dict(r) for r in c.execute('SELECT * FROM runs ORDER BY created DESC LIMIT 60')]
+  runs=[dict(r) for r in c.execute('SELECT runs.*,main_choices.choice AS mainChoice FROM runs LEFT JOIN main_choices ON main_choices.run_id=runs.id ORDER BY created DESC LIMIT 60')]
   verified=bool(c.execute("SELECT 1 FROM runs WHERE status IN ('complete','review') LIMIT 1").fetchone())
- return {'runs':runs,'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
+  main_books=main_workbook.books(c)
+ return {'runs':runs,'mainBooks':main_books,'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
 def downloadable_report(folder):
  def ready(directory):
   try:
@@ -190,6 +193,12 @@ class Handler(BaseHTTPRequestHandler):
   try:
    self.guard();p=urlparse(self.path).path
    if p=='/api/state':return self.send(200,public_state())
+   if p.startswith('/api/main/') and p.endswith('/download'):
+    chunks=p.split('/')
+    if len(chunks)!=5:raise ValueError('Invalid workbook URL')
+    month=chunks[3]
+    with db() as c:file=main_workbook.download(DATA,c,month)
+    payload=file.read_bytes();self.send_response(200);self.send_header('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');self.send_header('Content-Disposition',f'attachment; filename="TitleVision Main Error Report - {month}.xlsx"');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(payload);return
    if p.startswith('/api/runs/'):
     chunks=p.split('/');rid=chunks[3]
     if len(rid)!=32 or any(c not in '0123456789abcdef' for c in rid):raise ValueError('Invalid report')
@@ -211,6 +220,13 @@ class Handler(BaseHTTPRequestHandler):
    self.guard(True);length=int(self.headers.get('Content-Length','0'))
    if length>8192:raise ValueError('Request too large')
    obj=json.loads(self.rfile.read(length));p=urlparse(self.path).path
+   if p.startswith('/api/runs/') and p.endswith('/main'):
+    chunks=p.split('/')
+    if len(chunks)!=5:raise ValueError('Invalid report URL')
+    with RunLock():
+     if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
+     result=main_workbook.decide(ROOT,DATA,db,run_process,chunks[3],obj.get('add'))
+    return self.send(200,result)
    if p=='/api/run':return self.send(202,{'id':launch_run(obj['start'],obj['end'])})
    if p=='/api/update/check':return self.send(200,UPDATES.check())
    if p=='/api/update/install':

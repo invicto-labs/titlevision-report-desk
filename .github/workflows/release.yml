@@ -48,6 +48,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Updater tests failed' }
           python app/tests/test_report.py
           if ($LASTEXITCODE -ne 0) { throw 'Workbook tests failed' }
+          python app/tests/test_main_workbook.py
+          if ($LASTEXITCODE -ne 0) { throw 'Main workbook continuity tests failed' }
           node --test --test-isolation=none app/tests/rules.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Rule tests failed' }
       - name: Validate Excel file format with Microsoft Open XML SDK

@@ -10,7 +10,24 @@ make no AI calls. Windows must remain awake, online and signed in for scheduled 
 Download `TitleVision-Report-Desk-Setup.exe` from this repository's latest release.
 Requires Windows 10/11 x64 and Microsoft Edge. Python/Node and report libraries are
 included. Save the TitleVision login and verify a report before enabling 08:45 AM
-India-time collection. Each run collects the previous calendar day into a new file.
+India-time collection. Each scheduled run collects the previous calendar day.
+
+## Main monthly workbook
+
+After a report completes, choose **Yes, add to main workbook** or **No, keep separate**.
+Only approved reports enter the monthly workbook. Scheduled runs also wait for a choice.
+The **Main monthly workbook** panel has one download per month; all approved records
+continue in the same detail sheet, with the existing summary PivotTables and formulas.
+
+Every error row is preserved, even when an order number repeats on the same day or
+on different days. Adding a newer collection for an already-approved Created Date
+replaces that date's full snapshot, without changing other dates. Repeating an approval
+does not duplicate records. Ranges spanning two months update the matching monthly files.
+No leaves the main workbook unchanged; a skipped report can be added later from history.
+
+The app keeps the main workbook locally. Download its latest copy after adding reports.
+Changes made in a downloaded Excel copy are not imported into the app. Workbook changes
+are published only after validation; a failed update keeps the prior workbook available.
 
 The **Application updates** panel shows the running version. **Get update** checks
 the latest stable GitHub release, verifies GitHub's SHA-256 digest, installs it and
@@ -55,7 +72,8 @@ derived from the recorded usernames until a mapping is supplied.
 
 ## Tests
 
-Run `python app/tests/test_server.py`, `python app/tests/test_updater.py`, and
+Run `python app/tests/test_server.py`, `python app/tests/test_updater.py`,
+`python app/tests/test_report.py`, `python app/tests/test_main_workbook.py`, and
 `node --test --test-isolation=none app/tests/rules.test.mjs`.
 
 The source repository contains no saved logins, report data, personal display-name
