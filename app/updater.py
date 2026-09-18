@@ -26,7 +26,17 @@ class Updates:
   self.opener=build_opener(Redirects())
  def token(self):
   file=self.data/'github-update.dpapi'
-  return self.encrypt(file.read_bytes(),True).decode() if file.exists() else ''
+  if file.exists():return self.encrypt(file.read_bytes(),True).decode()
+  # Reuse an existing owner sign-in through Git's credential interface only.
+  # Never prompt, launch login, or save the publishing credential in app data.
+  env=dict(os.environ,GIT_TERMINAL_PROMPT='0',GCM_INTERACTIVE='never')
+  try:
+   result=subprocess.run(['git','credential','fill'],input='protocol=https\nhost=github.com\nusername='+self.config['repository'].split('/')[0]+'\n\n',text=True,capture_output=True,env=env,timeout=10,creationflags=0x08000000 if os.name=='nt' else 0,cwd=self.root)
+   if result.returncode==0:
+    credential=dict(line.split('=',1) for line in result.stdout.splitlines() if '=' in line)
+    if credential.get('username','').casefold()==self.config['repository'].split('/')[0].casefold():return credential.get('password','')
+  except (OSError,subprocess.TimeoutExpired):pass
+  return ''
  def save_token(self,value):
   file=self.data/'github-update.dpapi'
   if not value:

@@ -34,8 +34,9 @@ are preserved during updates. New PCs can add their own data\names.json map.
 UPDATES
 The Application updates panel shows the running version. Get update downloads
 and verifies the latest stable GitHub release, then installs it and restarts.
-For this private repository, save a fine-grained GitHub token with Contents: read
-access under Private GitHub release access on each PC. Never share a write token.
+For this private repository, reuse Git's existing sign-in as invicto-labs, or save
+a fine-grained token with Contents: read access under Private GitHub release access
+on each PC. Never share a write token.
 Updates preserve reports, settings and the daily schedule.
 
 If startup fails, double-click Check Application.cmd. It tests the included Python

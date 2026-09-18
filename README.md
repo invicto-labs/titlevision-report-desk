@@ -18,16 +18,18 @@ restarts the app. It refuses updates while a report is active. Settings, encrypt
 credentials, private display-name mappings and reports are stored separately from
 versioned application files. Activation keeps the previous version for rollback.
 
-For private releases, each PC needs a fine-grained GitHub token with **Contents:
-read** permission on this repository, entered under **Private GitHub release access**.
+For private releases, a PC can reuse Git's existing sign-in as `invicto-labs`, or
+use a fine-grained GitHub token with **Contents: read** permission on this repository,
+entered under **Private GitHub release access**. A saved read-only token takes priority.
+Existing Git credentials are retrieved without prompting and are never copied to app storage.
 Do not embed GitHub or TitleVision tokens in source, release files or URLs.
 
 ## Publish the next version
 
 1. Make and test the code changes.
-2. Bump `version` in `app/version.json` (for example, from `1.2.0` to `1.2.1`).
+2. Bump `version` in `app/version.json` (for example, from `1.2.2` to `1.2.3`).
 3. Update `RELEASE_NOTES.md`, commit and push the changes.
-4. Create and push the matching tag, e.g. `v1.2.1`.
+4. Create and push the matching tag, e.g. `v1.2.3`.
 
 The release workflow tests the code, builds the Windows installer and publishes a
 GitHub release. Installed apps can then receive it through **Get update**. Ordinary

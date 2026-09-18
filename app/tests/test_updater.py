@@ -46,6 +46,23 @@ class UpdateTests(unittest.TestCase):
    self.up.download(release);args=execute.call_args.args[0];self.assertEqual(args[1],'--apply-update');self.assertEqual(args[-1],'1.3.0')
   self.assertEqual(self.up.status()['phase'],'installing')
  def test_busy_flag(self):self.up.write('downloading','test');self.assertTrue(self.up.busy())
+ def test_saved_read_token_takes_priority(self):
+  self.up.save_token('read-only-test-token')
+  with patch('updater.subprocess.run') as git:
+   self.assertEqual(self.up.token(),'read-only-test-token');git.assert_not_called()
+ def test_existing_git_signin_stays_in_memory(self):
+  from subprocess import CompletedProcess
+  with patch('updater.subprocess.run',return_value=CompletedProcess([],0,'username=invicto-labs\npassword=test-token\n')) as git:
+   self.assertEqual(self.up.token(),'test-token')
+   self.assertEqual(git.call_args.kwargs['env']['GCM_INTERACTIVE'],'never')
+   self.assertEqual(git.call_args.kwargs['env']['GIT_TERMINAL_PROMPT'],'0')
+   self.assertFalse((self.data/'github-update.dpapi').exists())
+ def test_wrong_git_account_ignored(self):
+  from subprocess import CompletedProcess
+  with patch('updater.subprocess.run',return_value=CompletedProcess([],0,'username=someone-else\npassword=test-token\n')):
+   self.assertEqual(self.up.token(),'')
+ def test_git_not_installed(self):
+  with patch('updater.subprocess.run',side_effect=FileNotFoundError):self.assertEqual(self.up.token(),'')
  def test_interrupted_update_can_be_retried(self):
   self.up.write('installing','test')
   with patch('updater.time.time',return_value=self.up.status()['time']+1801):
