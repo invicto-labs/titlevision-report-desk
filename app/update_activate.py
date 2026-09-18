@@ -5,13 +5,33 @@ from ctypes import wintypes
 root=Path(__file__).resolve().parent.parent
 data=Path(os.environ['LOCALAPPDATA'])/'TitleVision Report Desk/data';data.mkdir(parents=True,exist_ok=True)
 version=json.loads((root/'app/version.json').read_text(encoding='utf8'))['version']
+result_file=None
+# Local health checks must not go through a company's HTTP proxy.
+local_http=urllib.request.build_opener(urllib.request.ProxyHandler({}))
 def status(phase,message):
- temp=data/('update-'+uuid.uuid4().hex+'.tmp');temp.write_text(json.dumps({'phase':phase,'message':message,'time':time.time(),'target':version}),encoding='utf8');temp.replace(data/'update-status.json')
+ payload=json.dumps({'phase':phase,'message':message,'time':time.time(),'target':version})
+ # A per-attempt result survives the installer's outer error handler and is not
+ # confused with a previous failed attempt at the same version.
+ if result_file and phase in {'failed','complete'}:result_file.write_text(payload,encoding='utf8')
+ temp=data/('update-'+uuid.uuid4().hex+'.tmp');temp.write_text(payload,encoding='utf8');temp.replace(data/'update-status.json')
 def state():
- with urllib.request.urlopen('http://127.0.0.1:8765/api/state',timeout=3) as response:return json.load(response)
+ with local_http.open('http://127.0.0.1:8765/api/state',timeout=3) as response:return json.load(response)
 def python_start(folder):
  env=dict(os.environ);env.pop('PYTHONHOME',None);env.pop('PYTHONPATH',None);env.pop('TITLEVISION_DATA',None);env.pop('TITLEVISION_NODE',None);env['TITLEVISION_PORT']='8765'
- return subprocess.Popen([str(folder/'runtime/python/pythonw.exe'),str(folder/'app/server.py')],cwd=folder/'app',env=env,creationflags=0x08000000)
+ logs=data/'updates';logs.mkdir(exist_ok=True)
+ log=logs/('startup-'+uuid.uuid4().hex+'.log')
+ with open(log,'ab') as output:
+  process=subprocess.Popen([str(folder/'runtime/python/pythonw.exe'),str(folder/'app/server.py')],cwd=folder/'app',env=env,stdin=subprocess.DEVNULL,stdout=output,stderr=output,creationflags=0x08000000)
+ process.reportdesk_log=log
+ return process
+
+def startup_failure(process):
+ log=getattr(process,'reportdesk_log',None)
+ detail=''
+ if log and log.exists():
+  lines=log.read_text(encoding='utf8',errors='replace').strip().splitlines()
+  if lines:detail=' '+lines[-1][:1000]
+ return 'The new version did not start.'+detail+(' Startup log: '+str(log) if log else '')
 def schedule(folder):
  script=folder/'app/server.py'
  flag='--update-schedule-if-enabled'
@@ -23,7 +43,9 @@ def schedule(folder):
   if not row or not json.loads(row[0]):return
   flag='--enable-schedule'
  r=subprocess.run([str(folder/'runtime/python/python.exe'),str(script),flag],cwd=folder/'app',capture_output=True,timeout=60,creationflags=0x08000000)
- if r.returncode:raise RuntimeError('The daily schedule could not be transferred to the new version')
+ if r.returncode:
+  detail=(r.stderr or r.stdout or b'').decode('utf8',errors='replace').strip()[-1500:]
+  raise RuntimeError('The daily schedule could not be transferred to the new version. '+detail)
 def process_path(pid):
  kernel=ctypes.windll.kernel32;kernel.OpenProcess.restype=wintypes.HANDLE
  kernel.QueryFullProcessImageNameW.argtypes=[wintypes.HANDLE,wintypes.DWORD,wintypes.LPWSTR,ctypes.POINTER(wintypes.DWORD)]
@@ -45,10 +67,10 @@ def discover():
  count=wintypes.DWORD.from_buffer(buffer).value;matches=[]
  for i in range(count):
   row=Row.from_buffer(buffer,4+i*ctypes.sizeof(Row))
-  if socket.ntohs(row.port&65535)==8765 and row.address in (0,0x0100007f):matches.append(row.pid)
+  if row.state==2 and socket.ntohs(row.port&65535)==8765 and row.address in (0,0x0100007f):matches.append(row.pid)
  matches=set(matches)
  if not matches:return None
- if len(matches)!=1:raise RuntimeError('Multiple services use the report port')
+ if len(matches)!=1:raise RuntimeError('Multiple services use port 8765 (process IDs: '+', '.join(map(str,sorted(matches)))+'). Close the extra service before retrying; no service was stopped')
  pid=matches.pop();exe=process_path(pid);folder=exe.parents[2]
  if exe!=folder/'runtime/python/pythonw.exe' or not (folder/'app/portable.json').exists():raise RuntimeError('Another application is using port 8765')
  return pid,folder
@@ -78,18 +100,32 @@ def activate(old_pid,old_root):
     except OSError:pass
     if new_process.poll() is not None:break
     time.sleep(.5)
-   raise RuntimeError('The new version did not start')
-  except Exception:
+   raise RuntimeError(startup_failure(new_process))
+  except Exception as original:
    if stopped:
     if new_process and new_process.poll() is None:new_process.terminate();new_process.wait(timeout=10)
-    schedule(old_root);python_start(old_root)
+    recovery=[]
+    try:schedule(old_root)
+    except Exception as error:recovery.append('Schedule recovery: '+str(error))
+    try:python_start(old_root)
+    except Exception as error:recovery.append('App restart: '+str(error))
+    if recovery:raise RuntimeError(str(original)+'. '+'; '.join(recovery)) from original
    raise
-if __name__=='__main__':
+def main(arguments):
+ global result_file
+ arguments=list(arguments)
+ if '--result' in arguments:
+  index=arguments.index('--result')
+  result_file=Path(arguments[index+1]);del arguments[index:index+2]
  try:
-  if sys.argv[1]=='--discover':
+  if arguments[0]=='--discover':
    existing=discover()
    if existing:activate(*existing)
    else:
     schedule(root);python_start(root)
-  else:activate(int(sys.argv[1]),Path(sys.argv[2]))
- except Exception as error:status('failed','Update did not finish: '+str(error)+'. The previous version was retained.');sys.exit(1)
+  else:activate(int(arguments[0]),Path(arguments[1]))
+  return 0
+ except Exception as error:
+  status('failed','Update did not finish: '+str(error)+'. Your report files were retained.');return 1
+
+if __name__=='__main__':sys.exit(main(sys.argv[1:]))

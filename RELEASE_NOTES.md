@@ -1,4 +1,15 @@
-## Version 1.3.0
+## Version 1.3.1
+
+- Show the actual activation failure in both Get update and the manual installer, instead of overwriting it with a generic message.
+- Keep a separate result for each activation attempt and capture Python startup errors.
+- Use direct local health checks that bypass network proxy settings.
+- Preserve the original failure reason and still try to restart the old app if restoring its schedule fails.
+- Report conflicting listener process IDs while retaining the guard against stopping unrelated services.
+- Add installer error-propagation, proxy and rollback regression tests.
+
+This release preserves reports, monthly workbooks and settings. It does not force-close unrelated services using port 8765.
+
+## Main monthly workbook (1.3.0)
 
 - Ask Yes or No before adding a completed report to the main monthly workbook.
 - Keep approved dates together in one detail sheet with the existing contributor formulas, borders and native summary PivotTables.

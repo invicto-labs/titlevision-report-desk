@@ -34,6 +34,10 @@ the latest stable GitHub release, verifies GitHub's SHA-256 digest, installs it 
 restarts the app. It refuses updates while a report is active. Settings, encrypted
 credentials, private display-name mappings and reports are stored separately from
 versioned application files. Activation keeps the previous version for rollback.
+Activation failures show the specific reason. Each attempt saves its result, and
+report-engine startup logs are kept under the local data directory's `updates` folder.
+Local restart checks bypass HTTP proxy settings. Conflicting services are reported
+with their process IDs and are never force-closed by the installer.
 
 For private releases, a PC can reuse Git's existing sign-in as `invicto-labs`, or
 use a fine-grained GitHub token with **Contents: read** permission on this repository,
@@ -73,6 +77,7 @@ derived from the recorded usernames until a mapping is supplied.
 ## Tests
 
 Run `python app/tests/test_server.py`, `python app/tests/test_updater.py`,
+`python app/tests/test_activation.py`,
 `python app/tests/test_report.py`, `python app/tests/test_main_workbook.py`, and
 `node --test --test-isolation=none app/tests/rules.test.mjs`.
 

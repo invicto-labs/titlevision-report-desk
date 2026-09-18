@@ -107,7 +107,8 @@ static class Program {
    using(var form=new Setup())Application.Run(form);return 0;
   }catch(Exception e){if(args.Length>0){
     var directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),@"TitleVision Report Desk\data");Directory.CreateDirectory(directory);
-    var text=new JavaScriptSerializer().Serialize(new{phase="failed",message="Update did not finish: "+e.Message,time=(DateTime.UtcNow-new DateTime(1970,1,1)).TotalSeconds});File.WriteAllText(Path.Combine(directory,"update-status.json"),text);
+    var message=e.Message.StartsWith("Update did not finish:")?e.Message:"Update did not finish: "+e.Message;
+    var text=new JavaScriptSerializer().Serialize(new{phase="failed",message=message,time=(DateTime.UtcNow-new DateTime(1970,1,1)).TotalSeconds,target=Portable.Version});File.WriteAllText(Path.Combine(directory,"update-status.json"),text);
    }else MessageBox.Show(e.Message,Portable.Name,MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;}
  }
 }
@@ -152,8 +153,25 @@ sealed class Setup:Form {
   Portable.ValidateFiles(folder);
  }
  internal static void Activate(string target,string pid,string oldRoot){
-  var arguments="\""+Path.Combine(target,@"app\update_activate.py")+"\" "+(pid==null?"--discover":pid+" \""+oldRoot+"\"");
-  using(var p=Process.Start(Portable.Python(target,arguments))){if(!p.WaitForExit(120000))throw new Exception("Application restart timed out");if(p.ExitCode!=0)throw new Exception("Activation failed. The previous version and your reports were retained. Check the application update status.");}
+  var directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),@"TitleVision Report Desk\data\updates");Directory.CreateDirectory(directory);
+  var result=Path.Combine(directory,"activation-"+Guid.NewGuid().ToString("N")+".json");
+  var arguments="\""+Path.Combine(target,@"app\update_activate.py")+"\" "+(pid==null?"--discover":pid+" \""+oldRoot+"\"")+" --result \""+result+"\"";
+  var start=Portable.Python(target,arguments);start.FileName=Path.Combine(target,@"runtime\python\python.exe");start.RedirectStandardError=true;start.RedirectStandardOutput=true;
+  using(var p=Process.Start(start)){
+   var stderr=p.StandardError.ReadToEndAsync();var stdout=p.StandardOutput.ReadToEndAsync();
+   if(!p.WaitForExit(240000)){if(!p.HasExited)p.Kill();throw new Exception("Application activation timed out. Your report files were retained.");}
+   if(p.ExitCode!=0)throw new Exception(ActivationFailure(result,stderr.Result));
+  }
+ }
+ internal static string ActivationFailure(string file,string stderr){
+  try {
+   var result=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(file));
+   if(result.ContainsKey("target") && Convert.ToString(result["target"])==Portable.Version && result.ContainsKey("phase") && Convert.ToString(result["phase"])=="failed" && result.ContainsKey("message")){
+    var detail=Convert.ToString(result["message"]);if(!String.IsNullOrWhiteSpace(detail))return detail;
+   }
+  } catch(IOException){} catch(ArgumentException){} catch(InvalidOperationException){}
+  if(!String.IsNullOrWhiteSpace(stderr)){var text=stderr.Trim();return "The activation engine could not run: "+(text.Length>1800?text.Substring(text.Length-1800):text);}
+  return "Activation could not finish. Run Check Application.cmd in the installed version folder. Your report files were retained.";
  }
  internal static void Shortcuts(string target,bool desktop){
   string exe=Path.Combine(target,"TitleVision Report Desk.exe");
