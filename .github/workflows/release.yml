@@ -46,8 +46,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Server tests failed' }
           python app/tests/test_updater.py
           if ($LASTEXITCODE -ne 0) { throw 'Updater tests failed' }
+          python app/tests/test_report.py
+          if ($LASTEXITCODE -ne 0) { throw 'Workbook tests failed' }
           node --test --test-isolation=none app/tests/rules.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Rule tests failed' }
+      - name: Validate Excel file format with Microsoft Open XML SDK
+        run: |
+          Invoke-WebRequest 'https://api.nuget.org/v3-flatcontainer/documentformat.openxml/2.20.0/documentformat.openxml.2.20.0.nupkg' -OutFile .build/openxml.zip
+          Expand-Archive .build/openxml.zip .build/openxml
+          $sdk = Join-Path $env:GITHUB_WORKSPACE '.build/openxml/lib/net46/DocumentFormat.OpenXml.dll'
+          foreach ($folder in Get-ChildItem app/tests/results -Directory -Filter 'report-*') {
+            powershell.exe -NoProfile -File app/tests/validate_openxml.ps1 -File (Join-Path $folder.FullName 'report.xlsx') -SdkPath $sdk
+            if ($LASTEXITCODE -ne 0) { throw 'Excel format validation failed' }
+          }
       - name: Build installer
         run: |
           python app/desktop/build_full.py

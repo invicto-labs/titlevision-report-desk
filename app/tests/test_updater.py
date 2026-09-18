@@ -46,6 +46,10 @@ class UpdateTests(unittest.TestCase):
    self.up.download(release);args=execute.call_args.args[0];self.assertEqual(args[1],'--apply-update');self.assertEqual(args[-1],'1.3.0')
   self.assertEqual(self.up.status()['phase'],'installing')
  def test_busy_flag(self):self.up.write('downloading','test');self.assertTrue(self.up.busy())
+ def test_current_version_result_stays_visible(self):
+  with patch.object(self.up,'check',return_value={'available':False,'current':'1.2.0','latest':'1.2.0'}):self.up.install()
+  self.assertEqual(self.up.status()['phase'],'current')
+  self.assertIn('latest version',self.up.status()['message'])
  def test_saved_read_token_takes_priority(self):
   self.up.save_token('read-only-test-token')
   with patch('updater.subprocess.run') as git:

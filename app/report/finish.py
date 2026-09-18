@@ -1,4 +1,4 @@
-"""Supplement Artifact authoring with native Excel PivotTable package parts."""
+"""Add schema-valid native Excel PivotTables and validate report contents."""
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
 from lxml import etree as E
@@ -34,7 +34,7 @@ source=sub(cache,'cacheSource',{'type':'worksheet'});sub(source,'worksheetSource
 fields=sub(cache,'cacheFields',{'count':str(len(headers))})
 for j,h in enumerate(headers):
  f=sub(fields,'cacheField',{'name':h,'numFmtId':'14' if j in {10,14,15} else '0'})
- vals=[r[j] for r in rows];nonblank=[v for v in vals if v is not None and v!=''];attrs={}
+ vals=[r[j] for r in rows];typed_values=shared.get(j,vals);nonblank=[v for v in typed_values if v is not None and v!=''];attrs={}
  if len(nonblank)<len(vals) and j!=23:attrs['containsBlank']='1'
  if not nonblank:attrs.update(containsNonDate='1' if j==23 else '0',containsString='1' if j==23 else '0')
  elif j in {10,14,15}:attrs.update(containsSemiMixedTypes='0',containsNonDate='0',containsDate='1',containsString='0',minDate=iso(min(nonblank)),maxDate=iso(max(nonblank)))
@@ -54,7 +54,11 @@ for r in rows:
   else:atom(rec,v,j)
 parts['xl/pivotCache/pivotCacheDefinition1.xml']=xml(cache);parts['xl/pivotCache/pivotCacheRecords1.xml']=xml(records)
 cr=relroot();rel(cr,'rId1','pivotCacheRecords','pivotCacheRecords1.xml');parts['xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels']=xml(cr)
-book=E.fromstring(parts['xl/workbook.xml']);pc=root('pivotCaches');sub(pc,'pivotCache',{'cacheId':'1','{'+R+'}id':'rIdPivotCache1'});calc=book.find(q('calcPr'));book.insert(list(book).index(calc) if calc is not None else len(book),pc);parts['xl/workbook.xml']=xml(book)
+book=E.fromstring(parts['xl/workbook.xml']);pc=root('pivotCaches');sub(pc,'pivotCache',{'cacheId':'1','{'+R+'}id':'rIdPivotCache1'})
+# CT_Workbook places pivotCaches after calcPr and customWorkbookViews.
+following={'smartTagPr','smartTagTypes','webPublishing','fileRecoveryPr','webPublishObjects','extLst'}
+position=next((i for i,child in enumerate(book) if E.QName(child).localname in following),len(book))
+book.insert(position,pc);parts['xl/workbook.xml']=xml(book)
 br=E.fromstring(parts['xl/_rels/workbook.xml.rels']);rel(br,'rIdPivotCache1','pivotCacheDefinition','pivotCache/pivotCacheDefinition1.xml');parts['xl/_rels/workbook.xml.rels']=xml(br)
 # Preserve the already verified native custom pivot style, remapping its dxf ids.
 styles=E.fromstring(parts['xl/styles.xml']);oldstyles=E.fromstring(template['xl/styles.xml'])
@@ -63,11 +67,16 @@ if dxfs is None:
  dxfs=E.Element(q('dxfs'),count='0');styles.insert(list(styles).index(ts) if ts is not None else len(styles),dxfs)
 if ts is None:ts=sub(styles,'tableStyles',{'count':'0'})
 custom=deepcopy(next(s for s in oldstyles.find(q('tableStyles')) if s.get('name')=='TitleVisionSummaryBorders'))
+# Revision IDs copied from Excel depend on namespace declarations on its original
+# styleSheet. They are not formatting and must not leak into the new stylesheet.
+for element in custom.iter():
+ for attribute in list(element.attrib):
+  if attribute.startswith('{'):del element.attrib[attribute]
 old_dxfs=oldstyles.find(q('dxfs'))
 for item in custom:
  old=int(item.get('dxfId'));item.set('dxfId',str(len(dxfs)));dxfs.append(deepcopy(old_dxfs[old]))
 ts.append(custom);ts.set('count',str(len(ts)));dxfs.set('count',str(len(dxfs)));parts['xl/styles.xml']=xml(styles)
-sheet=E.fromstring(parts['xl/worksheets/sheet1.xml']);pps=sub(sheet,'pivotParts',{'count':str(len(payload['specs']))});sr=relroot()
+sheet=E.fromstring(parts['xl/worksheets/sheet1.xml']);sr=relroot()
 ct=E.fromstring(parts['[Content_Types].xml'])
 def override(path,kind):E.SubElement(ct,'{'+C+'}Override',PartName='/'+path,ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.'+kind+'+xml')
 override('xl/pivotCache/pivotCacheDefinition1.xml','pivotCacheDefinition');override('xl/pivotCache/pivotCacheRecords1.xml','pivotCacheRecords')
@@ -89,7 +98,7 @@ for k,p in enumerate(payload['specs'],1):
   if j in {1,13}:f.set('dataField','1')
   if j==p['field']:
    f.attrib.update({'axis':'axisRow','compact':'0','outline':'0','defaultSubtotal':'0','showAll':'1'})
-   items=sub(f,'items',{'count':str(len(p['items']))})
+   items=sub(f,'items',{'count':str(len(p['items']))}) if p['items'] else None
    for i,name in enumerate(p['items']):
     attrs={'x':str(i)}
     if name not in [r[p['field']] or '' for r in rows]:attrs['m']='1'
@@ -99,7 +108,9 @@ for k,p in enumerate(payload['specs'],1):
  sub(sub(ri,'i',{'t':'grand'}),'x')
  path=f'xl/pivotTables/pivotTable{k}.xml';parts[path]=xml(pt);override(path,'pivotTable')
  pr=relroot();rel(pr,'rId1','pivotCacheDefinition','../pivotCache/pivotCacheDefinition1.xml');parts[f'xl/pivotTables/_rels/pivotTable{k}.xml.rels']=xml(pr)
- rel(sr,f'rIdPivot{k}','pivotTable',f'../pivotTables/pivotTable{k}.xml');sub(pps,'pivotPart',{'{'+R+'}id':f'rIdPivot{k}'})
+ # Worksheets reference PivotTables through package relationships only.
+ # A pivotParts child is not valid SpreadsheetML and causes Excel repair.
+ rel(sr,f'rIdPivot{k}','pivotTable',f'../pivotTables/pivotTable{k}.xml')
 parts['xl/worksheets/sheet1.xml']=xml(sheet);parts['xl/worksheets/_rels/sheet1.xml.rels']=xml(sr);parts['[Content_Types].xml']=xml(ct)
 # Package relationship/content-type files use their own default namespace.
 for name,content in list(parts.items()):
@@ -141,4 +152,4 @@ with ZipFile(out) as z:
  for name in z.namelist():
   if name.endswith('.xml') or name.endswith('.rels'): E.fromstring(z.read(name))
 assert collection['count']==len(rows)
-(base/'validation.json').write_text(json.dumps({'passed':True,'count':len(rows),'points':expected_points,'pivots':4,'sourceRowsReconciled':True,'formulasVerified':True}),encoding='utf8')
+(base/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':2,'count':len(rows),'points':expected_points,'pivots':4,'sourceRowsReconciled':True,'formulasVerified':True}),encoding='utf8')

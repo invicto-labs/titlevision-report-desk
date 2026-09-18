@@ -1,10 +1,9 @@
-## Version 1.2.2
+## Version 1.2.3
 
-- Show the running application version in the dashboard.
-- Add Get update for stable GitHub releases with verified installer downloads.
-- Preserve saved logins, reports, private display-name mappings and scheduling during updates.
-- Support encrypted, repository-scoped access to private GitHub releases.
-- Prevent updates during active report collection and retain the previous version for rollback.
-- Include the Windows startup fix for false port-conflict errors.
-- Allow retry after an interrupted update and include current installation instructions.
-- Reuse an existing Git sign-in as invicto-labs for private release access, without copying the publishing credential into application storage. Other PCs can use a repository-scoped read-only token.
+- Fix Excel's content-repair warning by correcting PivotTable relationships, workbook XML ordering and copied style metadata.
+- Correct empty-report PivotTable cache metadata. Preserve native PivotTables, drill-through, borders and editable contributor formulas.
+- Rebuild older downloads from their saved, verified data when needed, keeping the original workbook and report history.
+- Show update checks, errors and current-version messages beside Get update. Keep the button disabled during checks and reload the dashboard after a version change.
+- Add report regression tests and Microsoft's Open XML format validator to release checks.
+
+Saved sign-in details, reports and the daily schedule are preserved.

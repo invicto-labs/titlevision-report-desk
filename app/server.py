@@ -158,6 +158,26 @@ def public_state():
   runs=[dict(r) for r in c.execute('SELECT * FROM runs ORDER BY created DESC LIMIT 60')]
   verified=bool(c.execute("SELECT 1 FROM runs WHERE status IN ('complete','review') LIMIT 1").fetchone())
  return {'runs':runs,'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
+def downloadable_report(folder):
+ def ready(directory):
+  try:
+   checked=json.loads((directory/'validation.json').read_text(encoding='utf8'))
+   return checked.get('passed') and checked.get('workbookFormatVersion')==2 and (directory/'report.xlsx').is_file()
+  except (OSError,ValueError):return False
+ if ready(folder):return folder/'report.xlsx'
+ corrected=folder/'workbook-v2'
+ if ready(corrected):return corrected/'report.xlsx'
+ with RunLock():
+  if UPDATES.busy():raise ValueError('The app is updating. Download the report after it restarts.')
+  if not ready(corrected):
+   # Rebuild only the workbook from the already verified payload. Preserve the
+   # original export, attribution decisions, report history and old workbook.
+   corrected.mkdir(exist_ok=True)
+   for name in ('payload.json','collection.json'):(corrected/name).write_bytes((folder/name).read_bytes())
+   run_process([sys.executable,ROOT/'report/build_portable.py',corrected],corrected)
+   run_process([sys.executable,ROOT/'report/finish.py',corrected],corrected)
+   if not ready(corrected):raise ValueError('The corrected workbook did not pass validation.')
+ return corrected/'report.xlsx'
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*a):pass
  def send(self,code,body,kind='application/json'):
@@ -178,7 +198,7 @@ class Handler(BaseHTTPRequestHandler):
     folder=DATA/'runs'/rid
     if len(chunks)==5 and chunks[4]=='download':
      if r['status'] not in ['complete','review']:raise ValueError('Report has not passed validation')
-     payload=(folder/'report.xlsx').read_bytes();self.send_response(200);self.send_header('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');self.send_header('Content-Disposition',f'attachment; filename="TitleVision Error Report - {r["start"]}'+(f' to {r["end"]}' if r['end']!=r['start'] else '')+'.xlsx"');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(payload);return
+     payload=downloadable_report(folder).read_bytes();self.send_response(200);self.send_header('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');self.send_header('Content-Disposition',f'attachment; filename="TitleVision Error Report - {r["start"]}'+(f' to {r["end"]}' if r['end']!=r['start'] else '')+'.xlsx"');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(payload);return
     issues=json.loads((folder/'issues.json').read_text(encoding='utf8')) if (folder/'issues.json').exists() else []
     return self.send(200,{'run':dict(r),'issues':issues})
    files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}

@@ -7,7 +7,7 @@ def build(folder):
  folder=Path(folder)
  payload=json.loads((folder/'payload.json').read_text(encoding='utf8'))
  collection=json.loads((folder/'collection.json').read_text(encoding='utf8'))
- headers,*rows=payload['data'];widths=payload['widths'];n=len(rows)
+ headers,*rows=payload['data'];widths=payload.get('widths') or json.loads((Path(__file__).resolve().parents[1]/'templates/layout.json').read_text(encoding='utf8'))['widths'];n=len(rows)
  title=collection['start'] if collection['start']==collection['end'] else collection['start']+' to '+collection['end']
  wb=xlsxwriter.Workbook(folder/'base.xlsx',{'strings_to_formulas':False,'strings_to_urls':False})
  summary=wb.add_worksheet('Summary');sheet=wb.add_worksheet('SP 2')

@@ -31,6 +31,22 @@ class ServerTests(unittest.TestCase):
  def test_private_files_not_served(self):
   with self.assertRaises(urllib.error.HTTPError) as e:urllib.request.urlopen(self.url+'/data/credentials.dpapi')
   self.assertEqual(e.exception.code,404)
+ def test_legacy_download_is_rebuilt_without_changing_original(self):
+  folder=testdata/'legacy';folder.mkdir();(folder/'report.xlsx').write_bytes(b'original')
+  for name in ('payload.json','collection.json'):(folder/name).write_text('{}')
+  def rebuild(args,directory,**kwargs):
+   (directory/'report.xlsx').write_bytes(b'corrected')
+   (directory/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':2}))
+  with patch.object(server,'run_process',side_effect=rebuild) as build:
+   corrected=server.downloadable_report(folder)
+   self.assertEqual(corrected.read_bytes(),b'corrected');self.assertEqual(build.call_count,2)
+   self.assertEqual(server.downloadable_report(folder),corrected);self.assertEqual(build.call_count,2)
+  self.assertEqual((folder/'report.xlsx').read_bytes(),b'original')
+ def test_failed_legacy_rebuild_is_not_downloaded(self):
+  folder=testdata/'invalid-legacy';folder.mkdir()
+  for name in ('payload.json','collection.json'):(folder/name).write_text('{}')
+  with patch.object(server,'run_process'):
+   with self.assertRaisesRegex(ValueError,'did not pass'):server.downloadable_report(folder)
  def test_pending_report_download_rejected(self):
   with server.db() as c:c.execute('INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',('a'*32,'2026-01-01','2026-01-01','failed','failure','now',None,None,0,None))
   with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(self.url+'/api/runs/'+'a'*32+'/download')

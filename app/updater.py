@@ -86,7 +86,9 @@ class Updates:
   try:
    if self.busy():raise ValueError('An update is already in progress')
    release=self.check()
-   if not release['available']:return release
+   if not release['available']:
+    self.write('current','You are running the latest version: v'+self.config['version']+'.',target=self.config['version'])
+    return release
    self.write('downloading','Downloading version '+release['latest'],target=release['latest'])
    threading.Thread(target=self.download,args=(release,),daemon=True).start()
    return release
