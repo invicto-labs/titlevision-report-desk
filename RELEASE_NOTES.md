@@ -1,3 +1,12 @@
+## Version 1.3.3
+
+- Resolve repeated products with the same name using Error Committed Date when the product number does not uniquely identify the workflow. Select only when exactly one candidate's recorded arrival/completion period overlaps that date.
+- Keep exact product-number matches first, preserve date-only values as a whole day, and never default to the newest product or use the report's creation date to resolve ambiguity.
+- Keep requiring review when periods overlap or relevant dates are missing or invalid. Save candidate product details locally for diagnosis.
+- Preserve every error row and the existing monthly workbook, contributor formulas and summary PivotTables.
+
+After updating, run the affected date range again. Existing failed runs are retained in history.
+
 ## Version 1.3.2
 
 - Prevent multiple Windows report engines from sharing the same address and port by using exclusive socket ownership.

@@ -7,3 +7,43 @@ test('product selection never guesses among two active products',()=>{const row=
 test('team rules preserve unassigned categories and do not infer VM from notes',()=>{const r=Array(20).fill('');r[6]='Searching';assert.equal(teamFor(r),'Search');r[6]='Typing';assert.equal(teamFor(r),'Type');r[6]='Specs-Standards';assert.equal(teamFor(r),'');r[7]='15.08 - Triage Delay';assert.equal(teamFor(r),'Triage');r[7]='Other error';r[8]='sent to VM to review';assert.equal(teamFor(r),'');r[6]='VM team';assert.equal(teamFor(r),'VM team');});
 test('identical source rows remain distinct occurrences',()=>{assert.notEqual(rowId(['same'],0),rowId(['same'],1));});
 test('a missing product number cannot match an empty product field',()=>{const row=Array(20).fill('');row[9]='Full Title';assert.throws(()=>selectProduct([{name:'Full Title',external:'001',originator:'',cancelled:''},{name:'Full Title',external:'002',originator:'other',cancelled:''}],row));});
+
+function repeatedUpdates(){
+ const row=Array(20).fill('');Object.assign(row,{9:'Update Full Title',12:'9/18/2026 5:06:48 PM',17:'9/18/2026',18:'vendor-007'});
+ const product=(external,arrival,completed)=>({name:row[9],external,originator:'',cancelled:'',arrival,completed});
+ const products=[product('partner-002','2/1/2026 11:30:29 AM','2/2/2026 1:13:12 PM'),product('partner-003','3/18/2026 10:33:36 AM','3/19/2026 6:36:54 AM'),product('partner-004','9/17/2026 11:05:27 AM','9/18/2026 3:07:17 AM')];
+ return {row,products};
+}
+test('repeated update regression: unique period on committed day resolves vendor EPON mismatch',()=>{
+ const {row,products}=repeatedUpdates();const result=selectProduct(products,row);
+ assert.equal(result.product.external,'partner-004');assert.match(result.method,/Error Committed Date/);
+ assert.equal(selectProduct([...products].reverse(),row).product.external,'partner-004');
+});
+test('historical committed date wins over newest product and later reporting date',()=>{
+ const {row,products}=repeatedUpdates();row[17]='2/2/2026';assert.equal(selectProduct(products,row).product.external,'partner-002');
+ row[17]='3/19/2026';assert.equal(selectProduct(products,row).product.external,'partner-003');
+});
+test('exact normalized number remains authoritative even outside committed period',()=>{
+ const {row,products}=repeatedUpdates();row[18]=' partner-002 ';products[0].external='\u00a0partner-002 ';assert.equal(selectProduct(products,row).product,products[0]);
+ row[18]='origin-1';products[1].originator=' origin-1 ';assert.equal(selectProduct(products,row).product,products[1]);
+});
+test('overlapping or unreadable periods require review',()=>{
+ for(const changed of [{arrival:'9/17/2026',completed:'9/19/2026'},{arrival:'',completed:'3/19/2026'},{arrival:'invalid',completed:'3/19/2026'},{arrival:'3/18/2026',completed:''},{arrival:'3/18/2026',completed:'invalid'},{arrival:'3/18/2026',completed:'3/17/2026'}]){
+  const {row,products}=repeatedUpdates();Object.assign(products[1],changed);assert.throws(()=>selectProduct(products,row),{code:'AMBIGUOUS_PRODUCT'});
+ }
+});
+test('missing, invalid or non-overlapping committed date cannot use created date',()=>{
+ for(const committed of ['','9/31/2026','9/19/2026']){const {row,products}=repeatedUpdates();row[17]=committed;assert.throws(()=>selectProduct(products,row),{code:'AMBIGUOUS_PRODUCT'});}
+});
+test('date precision and day boundaries do not invent a timestamp',()=>{
+ const {row,products}=repeatedUpdates();row[17]='9/18/2026 3:07:17 AM';assert.equal(selectProduct(products,row).product,products[2]);
+ row[17]='9/18/2026 3:07:18 AM';assert.throws(()=>selectProduct(products,row));
+ products[2].completed='9/18/2026';row[17]='9/18/2026 11:59:59 PM';assert.equal(selectProduct(products,row).product,products[2]);
+ row[17]='9/19/2026';assert.throws(()=>selectProduct(products,row));
+ products[2].arrival='9/19/2026 12:00:00 AM';products[2].completed='9/20/2026';row[17]='9/18/2026';assert.throws(()=>selectProduct(products,row));
+});
+test('duplicate exact EPON restricts date matching to those candidates',()=>{
+ const {row,products}=repeatedUpdates();products[0].external=row[18];products[1].external=row[18];assert.throws(()=>selectProduct(products,row));
+ row[17]='3/19/2026';assert.equal(selectProduct(products,row).product,products[1]);
+ products[0].cancelled='2/3/2026';products[1].cancelled='3/20/2026';assert.throws(()=>selectProduct(products,row));
+});

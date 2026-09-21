@@ -90,7 +90,12 @@ try{
    const tv=normalize(await detail.locator('#ctl00_ContentPlaceHolder1_OrderWorkflowDetails1_lblServiceProviderOrderNumber').innerText());const client=normalize(await detail.locator('#ctl00_ContentPlaceHolder1_OrderWorkflowDetails1_lblOriginatorClient').innerText());
    const indexes=Object.fromEntries(expectedProductHeaders.map(label=>[label,normalizedHeaders.indexOf(label)]));
    const products=await detail.locator('#ctl00_ContentPlaceHolder1_grdWorkflowInstances_ctl00').evaluate((t,ix)=>[...t.querySelectorAll('tr')].filter(r=>r.querySelector('a[href*="showUtilityControlsWFI"]')).map(r=>{const c=[...r.cells].map(c=>c.innerText.trim());const a=r.querySelector('a[href*="showUtilityControlsWFI"]');return {name:a.innerText.trim(),href:a.getAttribute('href'),external:c[ix['External Product Number']],originator:c[ix['Originator Product Number']],arrival:c[ix['Arrival Time']],completed:c[ix['Completed Time']],cancelled:c[ix['Cancelled Time']]};}),indexes);
-   const selected=selectProduct(products,v);const key=row.url+'|'+selected.product.href;
+   let selected;
+   try{selected=selectProduct(products,v);}catch(e){
+    if(e.code==='AMBIGUOUS_PRODUCT')await fs.writeFile(path.join(dir,'product-review.json'),JSON.stringify({rowId:row.id,order:v[1],orderUrl:row.url,product:v[9],epon:v[18],errorCommittedDate:v[17],products,message:e.message},null,2));
+    throw e;
+   }
+   const key=row.url+'|'+selected.product.href;
    if(cache.has(key))verified={...cache.get(key),selection:selected.method};else{
     const match=selected.product.href.match(/^javascript:showUtilityControlsWFI\('([a-f0-9-]{36})'\);\s*$/i);if(!match)throw Error('Unrecognized product task link');
     const tasks=new URL('/Tasks.aspx',BASE);tasks.searchParams.set('PublicOrderId',new URL(row.url).searchParams.get('PublicOrderId'));tasks.searchParams.set('wfiid',match[1]);await detail.goto(tasks.href,{referer:row.url});

@@ -7,13 +7,33 @@ export function serial(s){if(!s)return null;const m=String(s).trim().match(/^(\d
 export function rowId(r,occurrence=0){return crypto.createHash('sha256').update(JSON.stringify([r,occurrence])).digest('hex').slice(0,24);}
 export function teamFor(r){const category=r[6].trim(),sub=r[7].trim();if(/\btriage\b/i.test(sub)||/^triage$/i.test(category))return 'Triage';if(/^VM team$/i.test(category)||/^VM team$/i.test(sub))return 'VM team';return category==='Searching'?'Search':category==='Typing'?'Type':'';}
 export function selectProduct(products,row){
- const matching=products.filter(p=>p.name.trim()===row[9].trim());
- const number=String(row[18]??'').trim();
- const epon=number?matching.filter(p=>p.external===number||p.originator===number):[];
+ const clean=s=>String(s??'').replace(/\u00a0/g,' ').trim();
+ const matching=products.filter(p=>clean(p.name)===clean(row[9]));
+ const number=clean(row[18]);
+ const epon=number?matching.filter(p=>clean(p.external)===number||clean(p.originator)===number):[];
  if(epon.length===1)return {product:epon[0],method:'Product name and product number'};
- const active=matching.filter(p=>!p.cancelled);
+ // When the number matches, never fall back to a different product number.
+ const active=(epon.length?epon:matching).filter(p=>!clean(p.cancelled));
  if(active.length===1)return {product:active[0],method:'Only non-cancelled matching product'};
- throw Error(`Ambiguous product: ${matching.length} matching, ${active.length} non-cancelled. Review required.`);
+ // Repeated updates can have the same name and a different vendor-side EPON.
+ // Use the committed date, not the reporting date or simply the newest product.
+ // A date without a time represents the whole day. Incomplete/unreadable dates
+ // cannot eliminate a competing candidate, so they must prevent this fallback.
+ const dateRange=value=>{const s=clean(value),start=serial(s);if(start===null)throw Error('Missing date');return [start,start+(/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)?1:0)];};
+ let dated=[];
+ try{
+  const [errorStart,errorEnd]=dateRange(row[17]);
+  dated=active.filter(p=>{
+   const [arrival]=dateRange(p.arrival);
+   const [completed,completedEnd]=clean(p.completed)?dateRange(p.completed):[Infinity,Infinity];
+   if(completed<arrival)throw Error('Product completion precedes arrival');
+   return (errorEnd===errorStart?arrival<=errorStart:arrival<errorEnd)&&
+    (completedEnd===completed?completed>=errorStart:completedEnd>errorStart);
+  });
+ }catch{dated=[];}
+ if(dated.length===1)return {product:dated[0],method:'Only matching product whose work period overlaps Error Committed Date'};
+ const error=Error(`Ambiguous product: ${matching.length} matching, ${active.length} non-cancelled. Error Committed Date did not identify one product. Review required.`);
+ error.code='AMBIGUOUS_PRODUCT';throw error;
 }
 export function taskNames(rows){let task='';const candidates=[[],[]];
  for(const r of rows){if(r.length!==6)continue;task=r[1].trim()||task;const user=r[3].trim();const kind=['Search','AESearch','UpdateSearch'].includes(task)?0:task==='TypingModule'?1:-1;
