@@ -45,5 +45,27 @@ test('date precision and day boundaries do not invent a timestamp',()=>{
 test('duplicate exact EPON restricts date matching to those candidates',()=>{
  const {row,products}=repeatedUpdates();products[0].external=row[18];products[1].external=row[18];assert.throws(()=>selectProduct(products,row));
  row[17]='3/19/2026';assert.equal(selectProduct(products,row).product,products[1]);
- products[0].cancelled='2/3/2026';products[1].cancelled='3/20/2026';assert.throws(()=>selectProduct(products,row));
+ products[0].cancelled='2/3/2026';products[1].cancelled='3/20/2026';assert.equal(selectProduct(products,row).product,products[1]);
+});
+
+test('cancelled historical product regression retains earlier error with vendor EPON mismatch',()=>{
+ const {row}=repeatedUpdates();row[9]='Full Title';row[17]='9/10/2026';row[12]='9/21/2026 11:10:27 AM';
+ const product={name:'Full Title',external:'partner-001',arrival:'9/10/2026 2:58:09 PM',completed:'',cancelled:'09/21/2026 11:10 AM'};
+ assert.equal(selectProduct([product],row).product,product);
+ row[17]='9/21/2026 11:10:01 AM';assert.throws(()=>selectProduct([product],row),{code:'AMBIGUOUS_PRODUCT'});
+ row[17]='9/9/2026';assert.throws(()=>selectProduct([product],row));
+ row[17]='';assert.throws(()=>selectProduct([product],row));
+});
+test('cancelled periods must be valid and uniquely overlap the committed date',()=>{
+ const {row,products}=repeatedUpdates();products.forEach(p=>p.cancelled='9/21/2026');
+ assert.equal(selectProduct(products,row).product,products[2]);
+ products[1].completed='';assert.throws(()=>selectProduct(products,row));
+ products[1].completed='3/19/2026';products[1].cancelled='invalid';assert.throws(()=>selectProduct(products,row));
+ products[1].cancelled='3/17/2026';assert.throws(()=>selectProduct(products,row));
+});
+test('cancelled product keeps completion and date-only cancellation boundaries',()=>{
+ const {row,products}=repeatedUpdates();products.forEach(p=>p.cancelled='9/21/2026');
+ row[17]='9/19/2026';assert.throws(()=>selectProduct(products,row));
+ products[2].completed='';row[17]='9/21/2026 11:59:59 PM';assert.equal(selectProduct(products,row).product,products[2]);
+ row[17]='9/22/2026';assert.throws(()=>selectProduct(products,row));
 });

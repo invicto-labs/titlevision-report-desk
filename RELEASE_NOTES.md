@@ -1,3 +1,12 @@
+## Version 1.3.4
+
+- Fix historical errors being blocked when all matching products have since been cancelled and the vendor-side product number differs.
+- In that case, choose a product only when exactly one recorded work period overlaps Error Committed Date. Bound the period by both completion and cancellation, preserving date-only precision.
+- Keep requiring review for overlapping, missing or invalid dates, and retain exact product-number matching priority.
+- Add regression coverage for the September 21 failure, cancellation boundaries and conflicting historical products.
+
+After updating, rerun the failed date. Reports, settings and monthly workbooks are preserved.
+
 ## Version 1.3.3
 
 - Resolve repeated products with the same name using Error Committed Date when the product number does not uniquely identify the workflow. Select only when exactly one candidate's recorded arrival/completion period overlaps that date.

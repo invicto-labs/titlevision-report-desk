@@ -13,7 +13,8 @@ export function selectProduct(products,row){
  const epon=number?matching.filter(p=>clean(p.external)===number||clean(p.originator)===number):[];
  if(epon.length===1)return {product:epon[0],method:'Product name and product number'};
  // When the number matches, never fall back to a different product number.
- const active=(epon.length?epon:matching).filter(p=>!clean(p.cancelled));
+ const numbered=epon.length?epon:matching;
+ const active=numbered.filter(p=>!clean(p.cancelled));
  if(active.length===1)return {product:active[0],method:'Only non-cancelled matching product'};
  // Repeated updates can have the same name and a different vendor-side EPON.
  // Use the committed date, not the reporting date or simply the newest product.
@@ -23,12 +24,16 @@ export function selectProduct(products,row){
  let dated=[];
  try{
   const [errorStart,errorEnd]=dateRange(row[17]);
-  dated=active.filter(p=>{
+  // A later cancellation does not erase earlier work. When every candidate is
+  // cancelled, retain historical candidates but bound their period by cancellation.
+  dated=(active.length?active:numbered).filter(p=>{
    const [arrival]=dateRange(p.arrival);
    const [completed,completedEnd]=clean(p.completed)?dateRange(p.completed):[Infinity,Infinity];
-   if(completed<arrival)throw Error('Product completion precedes arrival');
+   const [cancelled,cancelledEnd]=clean(p.cancelled)?dateRange(p.cancelled):[Infinity,Infinity];
+   if(completed<arrival||cancelled<arrival)throw Error('Product end precedes arrival');
    return (errorEnd===errorStart?arrival<=errorStart:arrival<errorEnd)&&
-    (completedEnd===completed?completed>=errorStart:completedEnd>errorStart);
+    (completedEnd===completed?completed>=errorStart:completedEnd>errorStart)&&
+    (cancelledEnd===cancelled?cancelled>=errorStart:cancelledEnd>errorStart);
   });
  }catch{dated=[];}
  if(dated.length===1)return {product:dated[0],method:'Only matching product whose work period overlaps Error Committed Date'};
