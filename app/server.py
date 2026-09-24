@@ -169,8 +169,14 @@ def install_schedule(enabled):
  if enabled:
   with db() as c:verified=c.execute("SELECT 1 FROM runs WHERE status IN ('complete','review') LIMIT 1").fetchone()
   if not verified:raise ValueError('Complete one verified live report before enabling unattended collection. The schedule remains paused.')
- result=subprocess.run(['powershell','-NoProfile','-File',str(ROOT/'schedule.ps1'),'-Python',sys.executable,'-App',str(ROOT),'-Mode','Enable' if enabled else 'Disable'],capture_output=True,text=True,creationflags=CREATE_NO_WINDOW,timeout=45)
- if result.returncode:raise ValueError('Windows could not update the schedule: '+result.stderr[-500:])
+ # Scope the policy to this child process and our bundled script. Do not change
+ # CurrentUser/LocalMachine policy; organization Group Policy still takes priority.
+ result=subprocess.run(['powershell','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(ROOT/'schedule.ps1'),'-Python',sys.executable,'-App',str(ROOT),'-Mode','Enable' if enabled else 'Disable'],capture_output=True,text=True,creationflags=CREATE_NO_WINDOW,timeout=45)
+ if result.returncode:
+  detail=result.stderr[-500:]
+  if 'PSSecurityException' in result.stderr or 'running scripts is disabled' in result.stderr or 'not digitally signed' in result.stderr:
+   detail='Windows still blocks the bundled schedule script. Ask your IT administrator to approve it under the enforced script policy. '+detail
+  raise ValueError('Windows could not update the schedule: '+detail)
  save_setting('schedule',enabled)
 def public_state():
  with db() as c:

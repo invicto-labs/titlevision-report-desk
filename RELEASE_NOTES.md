@@ -1,3 +1,12 @@
+## Version 1.3.5
+
+- Fix Enable schedule failing with “running scripts is disabled” on PCs using the normal Restricted PowerShell policy.
+- Launch the bundled schedule script with a process-only execution-policy setting and noninteractive mode. No persistent CurrentUser or LocalMachine policy is changed, and enforced organization policies still take precedence.
+- Keep the existing schedule setting when registration or disabling fails, and explain when IT approval is still needed.
+- Add a Windows regression that reproduces Restricted policy blocking a harmless script, then verifies the corrected launch succeeds without changing its parent's policy.
+
+On each PC, install this release, save the TitleVision sign-in, complete one verified report, then click Enable schedule. Windows must use India time; keep the user signed in and the PC awake and online.
+
 ## Version 1.3.4
 
 - Fix historical errors being blocked when all matching products have since been cancelled and the vendor-side product number differs.

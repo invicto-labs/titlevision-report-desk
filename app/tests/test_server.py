@@ -104,4 +104,31 @@ class ServerTests(unittest.TestCase):
   with patch.object(server.subprocess,'run') as command:
    with self.assertRaisesRegex(ValueError,'verified live report'):server.install_schedule(True)
    command.assert_not_called()
+ def test_schedule_policy_is_scoped_to_bundled_script_process(self):
+  from types import SimpleNamespace
+  with patch.object(server.subprocess,'run',return_value=SimpleNamespace(returncode=0,stderr='')) as command:
+   server.install_schedule(False)
+  args=command.call_args.args[0]
+  self.assertEqual(args[:7],['powershell','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(server.ROOT/'schedule.ps1')])
+  self.assertNotIn('Set-ExecutionPolicy',' '.join(args))
+  self.assertEqual(args[-2:],['-Mode','Disable']);self.assertFalse(server.setting('schedule'))
+ def test_schedule_policy_failure_does_not_change_saved_enabled_state(self):
+  from types import SimpleNamespace
+  server.save_setting('schedule',True)
+  try:
+   with patch.object(server.subprocess,'run',return_value=SimpleNamespace(returncode=1,stderr='PSSecurityException: running scripts is disabled')):
+    with self.assertRaisesRegex(ValueError,'IT administrator'):server.install_schedule(False)
+   self.assertTrue(server.setting('schedule'))
+  finally:server.save_setting('schedule',False)
+ def test_schedule_script_starts_under_inherited_restricted_policy(self):
+  if os.name!='nt':self.skipTest('Windows PowerShell policy regression')
+  # Exercise a harmless replacement script; never register or alter real tasks.
+  folder=testdata/'schedule policy probe';folder.mkdir()
+  (folder/'schedule.ps1').write_text("param([string]$Python,[string]$App,[string]$Mode)\n$ErrorActionPreference='Stop'\n[IO.File]::WriteAllText([IO.Path]::Combine($App,'script-ran.txt'),'ran')\n",encoding='utf8')
+  with patch.dict(os.environ,{'PSExecutionPolicyPreference':'Restricted'}),patch.object(server,'ROOT',folder):
+   baseline=server.subprocess.run(['powershell','-NoProfile','-NonInteractive','-File',str(folder/'schedule.ps1'),'-App',str(folder),'-Mode','Disable'],capture_output=True,text=True,creationflags=server.CREATE_NO_WINDOW,timeout=30)
+   self.assertNotEqual(baseline.returncode,0,'The baseline must reproduce the script-policy failure')
+   server.install_schedule(False)
+   self.assertEqual((folder/'script-ran.txt').read_text(),'ran')
+   self.assertEqual(os.environ['PSExecutionPolicyPreference'],'Restricted')
 if __name__=='__main__':unittest.main()
