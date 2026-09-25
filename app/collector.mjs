@@ -24,6 +24,7 @@ try{
  await page.locator('#_uec__btnResetFilters').click();await page.waitForLoadState('networkidle');
  await page.locator('#_uec__txtFilterErrorStartDate').fill(siteDate(job.start));
  await page.locator('#_uec__txtFilterErrorEndDate').fill(siteDate(plusDays(job.end,1)));
+ // Read every status from the live site, including Accepted/Auto-Accepted and future additions.
  const allStatuses=await page.locator('#_uec_lstStatuses option').evaluateAll(es=>es.map(e=>({value:e.value,label:e.text})));
  if(!allStatuses.length)throw Error('Status options are missing');
  await page.locator('#_uec_lstStatuses').selectOption(allStatuses.map(s=>s.value));

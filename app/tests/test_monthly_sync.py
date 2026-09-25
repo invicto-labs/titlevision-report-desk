@@ -2,11 +2,13 @@ from contextlib import contextmanager
 from datetime import date,datetime
 from pathlib import Path
 from unittest.mock import patch
-import copy,hashlib,json,shutil,sqlite3,subprocess,sys,unittest,uuid
+import copy,hashlib,json,shutil,sqlite3,subprocess,sys,unittest,uuid,zipfile
+from xml.etree import ElementTree as ET
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import main_workbook as main
 import monthly_sync as sync
 ROOT=Path(__file__).resolve().parents[1]
+SITE_STATUSES=('New','Accepted','Auto-Accepted','Disputed','Non-Chargeable','Chargeable')
 
 class MonthlySyncTests(unittest.TestCase):
  def setUp(self):
@@ -69,9 +71,9 @@ class MonthlySyncTests(unittest.TestCase):
   second=[self.source(3,'2026-10-02'),self.source(4,'2026-10-02')]
   a=self.seed('2026-10-01','2026-10-01',first);b=self.seed('2026-10-02','2026-10-02',second)
   self.live=copy.deepcopy(first+second);self.add(a)
-  for s,status,points in zip(self.live,['New','Dispute','Chargeable','Non-Chargeable'],[3,2,4,.5]):s['values'][0]=status;s['values'][15]=str(points)
+  for s,status,points in zip(self.live,['New','Disputed','Chargeable','Non-Chargeable'],[3,2,4,.5]):s['values'][0]=status;s['values'][15]=str(points)
   self.add(b);_,rows=self.book()
-  self.assertEqual(len(rows),4);self.assertEqual([r[0] for r in rows],['New','Dispute','Chargeable','Non-Chargeable'])
+  self.assertEqual(len(rows),4);self.assertEqual([r[0] for r in rows],['New','Disputed','Chargeable','Non-Chargeable'])
   self.assertEqual([r[13] for r in rows],[3,2,4,.5]);self.assertTrue(all(r[22]=='Search' and r[23]=='Searcher' for r in rows))
   self.assertEqual(self.fetches[-1],('2026-10-01','2026-10-03'))
   self.add(b);self.assertEqual(len(self.book()[1]),4)
@@ -82,6 +84,19 @@ class MonthlySyncTests(unittest.TestCase):
   self.live[0]['values'][0]='Non-Chargeable';self.live[0]['values'][15]='1';self.live[0]['values'][16]='10/03/2026'
   sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
   rows=self.book()[1];self.assertEqual(len(rows),1);self.assertEqual(rows[0][0],'Non-Chargeable');self.assertEqual(rows[0][13],1)
+ def test_all_site_status_transitions_and_future_status_are_preserved(self):
+  original=self.source(1,'2026-10-01');self.live=[copy.deepcopy(original)]
+  self.add(self.seed('2026-10-01','2026-10-01',[original]))
+  # Statuses are source values, not an enum: a later site addition must survive too.
+  for points,status in enumerate((*SITE_STATUSES,'Future site status')):
+   with self.subTest(status=status):
+    self.live[0]['values'][0]=status;self.live[0]['values'][15]=str(points)
+    self.live[0]['values'][16]='10/03/2026'
+    sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
+    _,rows=self.book();self.assertEqual(len(rows),1)
+    self.assertEqual(rows[0][0],status);self.assertEqual(rows[0][13],points)
+    self.assertEqual(rows[0][14],(datetime(2026,10,3)-datetime(1899,12,30)).days)
+    self.assertEqual(rows[0][22:24],['Search','Searcher'])
  def test_delete_keeps_daily_reports_and_allows_reapproval(self):
   s=self.source(1,'2026-10-01');self.live=[s];rid=self.seed('2026-10-01','2026-10-01',[s]);self.add(rid)
   sync.delete(self.data,self.db,'2026-10')
@@ -120,15 +135,25 @@ class MonthlySyncTests(unittest.TestCase):
   self.assertEqual(self.fetches,[])
  def test_real_pivots_contain_refreshed_status_and_points(self):
   import openpyxl
-  source=[self.source(1,'2026-10-01'),self.source(2,'2026-10-01')];rid=self.seed('2026-10-01','2026-10-01',source)
-  self.live=copy.deepcopy(source);self.live[0]['values'][0]='Non-Chargeable';self.live[0]['values'][15]='0';self.live[1]['values'][0]='Dispute';self.live[1]['values'][15]='2'
+  source=[self.source(i+1,'2026-10-01') for i in range(len(SITE_STATUSES))];rid=self.seed('2026-10-01','2026-10-01',source)
+  self.live=copy.deepcopy(source);points=[3,2,1,4,0,5]
+  for entry,status,value in zip(self.live,SITE_STATUSES,points):entry['values'][0]=status;entry['values'][15]=str(value)
   self.add(rid,self.real_build);file,rows=self.book();wb=openpyxl.load_workbook(file,data_only=True)
-  self.assertEqual(wb['Summary']['A2'].value,'October 2026 Main Workbook');self.assertEqual(wb['SP 2']['A2'].value,'Non-Chargeable');self.assertEqual(wb['SP 2']['N2'].value,0)
+  self.assertEqual(wb['Summary']['A2'].value,'October 2026 Main Workbook')
+  self.assertEqual([wb['SP 2'].cell(i+2,1).value for i in range(6)],list(SITE_STATUSES))
+  self.assertEqual([wb['SP 2'].cell(i+2,14).value for i in range(6)],points)
   self.assertEqual(len(wb['Summary']._pivots),4)
   for pivot in wb['Summary']._pivots:
-   self.assertEqual(pivot.cache.recordCount,2)
-  totals={r[4]:tuple(r[5:7]) for r in wb['Summary'].values if r[4] in ('Dispute','Non-Chargeable')}
-  self.assertEqual(totals,{'Dispute':(1,2),'Non-Chargeable':(1,0)})
+   self.assertEqual(pivot.cache.recordCount,6)
+  with zipfile.ZipFile(file) as archive:
+   ns={'x':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+   caches=[name for name in archive.namelist() if name.startswith('xl/pivotCache/pivotCacheDefinition') and name.endswith('.xml')]
+   self.assertTrue(caches)
+   for name in caches:
+    field=ET.fromstring(archive.read(name)).find('x:cacheFields/x:cacheField',ns)
+    self.assertEqual({s.get('v') for s in field.findall('x:sharedItems/x:s',ns)},set(SITE_STATUSES))
+  totals={r[4]:tuple(r[5:7]) for r in wb['Summary'].values if r[4] in SITE_STATUSES}
+  self.assertEqual(totals,{status:(1,value) for status,value in zip(SITE_STATUSES,points)})
   fixture=ROOT/'tests/results'/('report-phase2-'+uuid.uuid4().hex);fixture.mkdir();shutil.copy2(file,fixture/'report.xlsx')
   print('PHASE2_FIXTURE='+str(fixture/'report.xlsx'))
 

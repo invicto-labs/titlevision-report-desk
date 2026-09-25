@@ -110,3 +110,7 @@ Run `python app/tests/test_server.py`, `python app/tests/test_updater.py`,
 The source repository contains no saved logins, report data, personal display-name
 map, installed runtimes or confidential spreadsheet engine. Packaged third-party
 components retain their own licenses. The Windows installer is currently unsigned.
+
+### Error statuses
+
+Every run reads and selects all statuses offered by TitleVision. The current set is New, Accepted, Auto-Accepted, Disputed, Non-Chargeable and Chargeable. Reports and monthly refreshes preserve the exact source status and actual points; PivotTables group all statuses present in the approved records. Future site statuses are included automatically.

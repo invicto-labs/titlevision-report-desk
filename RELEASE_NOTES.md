@@ -1,3 +1,10 @@
+## Version 1.4.1
+
+- Clarify the full set of TitleVision statuses in the report screen: New, Accepted, Auto-Accepted, Disputed, Non-Chargeable and Chargeable.
+- Continue discovering and selecting every status from the live site on each collection; no fixed status list filters out future additions. Existing v1.4.0 already preserves all source statuses.
+- Add explicit regression coverage for all six statuses, transitions on the same error, actual points, updated dates and native PivotTable records/totals, plus an unknown future status.
+- Preserve the October 1 activation date and all existing monthly approval and workbook behavior.
+
 ## Version 1.4.0
 
 Phase 2 activates on 1 October 2026 in India time and applies to October 2026 and later workbooks. September workbooks retain their existing behavior.
