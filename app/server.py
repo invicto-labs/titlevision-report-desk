@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from contextlib import contextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from updater import Updates
-import main_workbook
+import main_workbook,monthly_sync
 ROOT=Path(__file__).resolve().parent
 PORTABLE=(ROOT/'portable.json').exists()
 DATA=Path(os.environ.get('TITLEVISION_DATA',Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'TitleVision Report Desk/data' if PORTABLE else ROOT/'data')).resolve();DATA.mkdir(parents=True,exist_ok=True)
@@ -127,6 +127,14 @@ def perform(rid,lock):
   run_process([sys.executable,ROOT/'report/finish.py',directory],directory)
   checks=json.loads((directory/'validation.json').read_text(encoding='utf8'));issues=json.loads((directory/'issues.json').read_text(encoding='utf8'))
   if not checks.get('passed'):raise ValueError('Workbook validation failed; report withheld.')
+  if monthly_sync.active():
+   months=sorted({day[:7] for day in main_workbook.days_between(run['start'],run['end']) if monthly_sync.eligible(day[:7])})
+   for month in months:
+    try:
+     monthly_sync.refresh(ROOT,DATA,db,run_process,lambda a,b,folder:fetch_month(a,b,folder,rid),month)
+    except Exception as e:
+     issues.append({'id':'month-'+month,'order':month+' main workbook','kind':'month_refresh','message':'Daily report is available. Monthly refresh failed; previous main workbook retained. '+str(e)[:500]})
+   (directory/'issues.json').write_text(json.dumps(issues),encoding='utf8')
   update(rid,status='review' if issues else 'complete',message=f'{len(issues)} item(s) need review' if issues else 'All report checks passed',count=checks['count'],points=checks['points'],issues=len(issues))
  except Exception as e:
   message=str(e)[:900]
@@ -134,6 +142,12 @@ def perform(rid,lock):
   except Exception:pass
   update(rid,status='failed',message=message)
  finally:lock.__exit__(None,None,None)
+
+def fetch_month(start,end,folder,rid=None):
+ def progress(event):
+  if rid and event.get('message'):update(rid,message='Month-to-date refresh: '+event['message'])
+ run_process([NODE,ROOT/'collector.mjs'],folder,dict(credentials(),start=start,end=end,directory=str(folder),exportOnly=True),progress)
+ run_process([sys.executable,ROOT/'reconcile.py',folder],folder)
 def launch_run(start,end,scheduled_day=None,background=True):
  if UPDATES.busy():raise ValueError('An application update is in progress. Run the report after it finishes.')
  start,end=date_range(start,end);credentials();lock=RunLock();lock.__enter__()
@@ -183,7 +197,8 @@ def public_state():
   runs=[dict(r) for r in c.execute('SELECT runs.*,main_choices.choice AS mainChoice FROM runs LEFT JOIN main_choices ON main_choices.run_id=runs.id ORDER BY created DESC LIMIT 60')]
   verified=bool(c.execute("SELECT 1 FROM runs WHERE status IN ('complete','review') LIMIT 1").fetchone())
   main_books=main_workbook.books(c)
- return {'runs':runs,'mainBooks':main_books,'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
+ with db() as c:syncs=[dict(r) for r in c.execute('SELECT * FROM main_sync_state ORDER BY month DESC')]
+ return {'runs':runs,'mainBooks':main_books,'mainSyncs':syncs,'phase2':{'enabled':monthly_sync.active(),'starts':'2026-10-01','currentMonth':monthly_sync.today().strftime('%Y-%m')},'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
 def downloadable_report(folder):
  def ready(directory):
   try:
@@ -249,7 +264,26 @@ class Handler(BaseHTTPRequestHandler):
     if len(chunks)!=5:raise ValueError('Invalid report URL')
     with RunLock():
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
-     result=main_workbook.decide(ROOT,DATA,db,run_process,chunks[3],obj.get('add'))
+     if type(obj.get('add')) is not bool:raise ValueError('Invalid main workbook choice')
+     with db() as c:r=c.execute('SELECT end FROM runs WHERE id=?',(chunks[3],)).fetchone()
+     if obj['add'] and monthly_sync.active() and r and r['end']>='2026-10-01':
+      result=monthly_sync.add(ROOT,DATA,db,run_process,fetch_month,chunks[3])
+     else:result=main_workbook.decide(ROOT,DATA,db,run_process,chunks[3],obj['add'])
+    return self.send(200,result)
+   if p in ('/api/main/create','/api/main/delete','/api/main/refresh'):
+    month=obj.get('month')
+    if not isinstance(month,str):raise ValueError('Choose a workbook month')
+    with RunLock():
+     if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
+     if p.endswith('/create'):result=monthly_sync.create(ROOT,DATA,db,run_process,month)
+     elif p.endswith('/delete'):
+      if obj.get('confirm') is not True:raise ValueError('Confirm removal of this monthly workbook. Daily reports will be kept.')
+      result=monthly_sync.delete(DATA,db,month)
+     else:
+      with db() as c:exists=c.execute('SELECT 1 FROM main_books WHERE month=?',(month,)).fetchone()
+      if not exists:raise ValueError('Create or add to this monthly workbook first.')
+      monthly_sync.refresh(ROOT,DATA,db,run_process,fetch_month,month)
+      with db() as c:result={'books':main_workbook.books(c),'message':'Month-to-date statuses and points verified; PivotTables rebuilt.'}
     return self.send(200,result)
    if p=='/api/run':return self.send(202,{'id':launch_run(obj['start'],obj['end'])})
    if p=='/api/update/check':return self.send(200,UPDATES.check())

@@ -1,3 +1,18 @@
+## Version 1.4.0
+
+Phase 2 activates on 1 October 2026 in India time and applies to October 2026 and later workbooks. September workbooks retain their existing behavior.
+
+- Create a named monthly workbook, refresh its status, or remove it while retaining daily reports for rebuilding. Removing a month clears its approvals; adding daily reports again rebuilds it.
+- Keep the Yes/No approval choice. Unapproved daily rows never enter the monthly workbook.
+- After a completed daily collection, export and reconcile that month's errors from its first day through the latest completed day. Update approved errors by TitleVision's native error ID, with order and creation-date checks, so repeated order numbers and separate errors remain distinct.
+- Copy the latest source status, points and Last Updated Date. Non-chargeable points use the actual site value, including zero; they are not guessed or forced to zero.
+- Recheck month-to-date data when adding a report or choosing Refresh status. Build the workbook and all four native PivotTables only after matching and validation pass, then publish the new revision.
+- On refresh failure, retain the previous verified workbook, show the failure, and keep the separate daily report available. Missing or conflicting error IDs require review instead of silently dropping rows.
+- Show month names, last successful refresh coverage and empty/failed/refreshing states. Existing downloaded Excel copies do not change; download the latest monthly workbook from the app.
+- Add October-boundary, duplicate-order, approval, deletion/rebuild, source-integrity and PivotTable regression tests.
+
+Install this release before October 1. The new controls and workflow stay inactive until that date. The October 1 scheduled run still collects September 30; the first scheduled October collection is October 2.
+
 ## Version 1.3.5
 
 - Fix Enable schedule failing with “running scripts is disabled” on PCs using the normal Restricted PowerShell policy.

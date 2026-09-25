@@ -2,7 +2,7 @@
 from collections import Counter,defaultdict,deque
 from datetime import datetime,date
 from pathlib import Path
-import json,sys,openpyxl,re
+import json,sys,openpyxl,re,hashlib
 HEADERS=['Status','Order Number','Vendor','User','Team','Task','Error Category Type','Error Category Sub Type','Notes','Product','Reported By','Created By','Created Date','Region','State','Points','Last Updated Date','Error Committed Date','EPON','PriceType']
 def norm(v):
  if v is None:return ''
@@ -36,5 +36,6 @@ def reconcile(directory):
  if not original.exists():original.write_text(json.dumps(source,ensure_ascii=False,indent=2),encoding='utf8')
  for row in source:row['values']=pool[canonical(row['values'])].popleft()
  (root/'source.json').write_text(json.dumps(source,ensure_ascii=False,indent=2),encoding='utf8')
+ (root/'reconciled.json').write_text(json.dumps({'count':len(source),'sourceSha256':hashlib.sha256((root/'source.json').read_bytes()).hexdigest(),'exportSha256':hashlib.sha256((root/'source.xlsx').read_bytes()).hexdigest()}),encoding='utf8')
  print(f'Reconciled all {len(exported)} exported error rows.')
 if __name__=='__main__':reconcile(sys.argv[1])

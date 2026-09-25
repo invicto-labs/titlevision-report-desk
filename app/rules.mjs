@@ -5,6 +5,18 @@ export function siteDate(s){const [y,m,d]=isoDate(s).split('-').map(Number);retu
 export function plusDays(s,n){const d=new Date(isoDate(s)+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);}
 export function serial(s){if(!s)return null;const m=String(s).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?: (\d{1,2}):(\d{2})(?::(\d{2}))? (AM|PM))?$/);if(!m)throw Error('Unrecognized TitleVision date: '+s);const [mo,da,y]=m.slice(1,4).map(Number);if(mo<1||mo>12||da<1||da>31|| (m[4]&&(+m[4]<1||+m[4]>12||+m[5]>59||+(m[6]||0)>59)))throw Error('Invalid TitleVision date');const t=Date.UTC(y,mo-1,da,m[4]?+m[4]%12+(m[7]==='PM'?12:0):0,+(m[5]||0),+(m[6]||0));const d=new Date(t);if(d.getUTCMonth()!==mo-1||d.getUTCDate()!==da)throw Error('Invalid calendar date');return t/86400000+25569;}
 export function rowId(r,occurrence=0){return crypto.createHash('sha256').update(JSON.stringify([r,occurrence])).digest('hex').slice(0,24);}
+export function sourceErrorId(links,orderUrl){
+ const ids=new Set();const order=new URL(orderUrl).searchParams.get('PublicOrderId');
+ for(const link of links){
+  const match=String(link??'').match(/UserErrors\.aspx\?[^'"\s)]+/i);if(!match)continue;
+  const url=new URL(match[0].replace(/&amp;/g,'&'),'https://tv.datatracetitle.com');
+  const id=url.searchParams.get('UserErrorId');if(!id)continue;
+  if(!/^\d+$/.test(id)||url.searchParams.get('PublicOrderId')!==order)throw Error('Error identity does not match its order');
+  ids.add(id);
+ }
+ if(ids.size>1)throw Error('Conflicting source error identities');
+ return [...ids][0]||null;
+}
 export function teamFor(r){const category=r[6].trim(),sub=r[7].trim();if(/\btriage\b/i.test(sub)||/^triage$/i.test(category))return 'Triage';if(/^VM team$/i.test(category)||/^VM team$/i.test(sub))return 'VM team';return category==='Searching'?'Search':category==='Typing'?'Type':'';}
 export function selectProduct(products,row){
  const clean=s=>String(s??'').replace(/\u00a0/g,' ').trim();

@@ -3,3 +3,4 @@
 .workspace>*{min-width:0}#progress,#issues{overflow-wrap:anywhere}.date-grid>*{min-width:0}.steps{flex-wrap:wrap}
 
 .main-choice{margin-top:20px;padding:20px;border:1px solid #9bccc7;border-radius:8px;background:#f2faf8}.main-choice h3{margin:0;font-size:19px}.main-choice .actions{flex-wrap:wrap}.main-choice .actions .primary{min-width:0}#main-choice-status{font-size:14px;font-weight:600}#main-books small{color:#60758a}
+.main-controls{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;margin:18px 0}.main-controls label{max-width:250px}.book-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}.book-actions button{padding:8px;font-size:12px}.sync-cell{white-space:normal;min-width:200px;max-width:300px;overflow-wrap:anywhere}

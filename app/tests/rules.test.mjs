@@ -1,11 +1,19 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {plusDays,serial,selectProduct,taskNames,teamFor,validateRows,rowId} from '../rules.mjs';
+import {plusDays,serial,selectProduct,taskNames,teamFor,validateRows,rowId,sourceErrorId} from '../rules.mjs';
 test('calendar boundaries and midnight inclusion',()=>{assert.equal(plusDays('2026-01-01',-1),'2025-12-31');assert.equal(plusDays('2028-03-01',-1),'2028-02-29');assert.throws(()=>serial('2/30/2026'));const values=Array(20).fill('');Object.assign(values,{1:'Order',9:'Full Title',12:'9/16/2026 12:00:00 AM',15:'1'});assert.equal(validateRows([{values}],'2026-09-16','2026-09-16').count,1);values[12]='9/17/2026 12:00:00 AM';assert.throws(()=>validateRows([{values}],'2026-09-16','2026-09-16'));});
 test('last completed human task includes blank task continuations',()=>{const r=(task,user,end)=>['',task,'9/15/2026 1:00:00 AM',user,'9/15/2026 1:00:00 AM',end];assert.deepEqual(taskNames([r('Search','First_ADSSearchType','9/15/2026 2:00:00 AM'),r('','Last_ADSSearchType','9/15/2026 3:00:00 AM'),r('','OWLServiceUser','9/15/2026 4:00:00 AM'),r('TypingModule','Typer_ADSSearchType','9/15/2026 5:00:00 AM'),r('','Unfinished_ADSSearchType','')]),['Last_ADSSearchType','Typer_ADSSearchType']);assert.deepEqual(taskNames([r('UpdateSearch','A_ADSSearchType','9/15/2026 2:00:00 AM')]),['A_ADSSearchType','']);});
 test('conflicting last humans stop attribution',()=>{assert.throws(()=>taskNames([['','Search','','A','9/15/2026 1:00:00 AM','9/15/2026 2:00:00 AM'],['','','','B','9/15/2026 1:00:00 AM','9/15/2026 2:00:00 AM']]));});
 test('product selection never guesses among two active products',()=>{const row=Array(20).fill('');row[9]='Full Title';row[18]='002';const products=[{name:'Full Title',external:'001',cancelled:'9/14/2026'},{name:'Full Title',external:'002',cancelled:''}];assert.equal(selectProduct(products,row).product.external,'002');row[18]='unmatched';assert.equal(selectProduct(products,row).product.external,'002');products[0].cancelled='';assert.throws(()=>selectProduct(products,row));row[9]='Two Owner';assert.throws(()=>selectProduct(products,row));});
 test('team rules preserve unassigned categories and do not infer VM from notes',()=>{const r=Array(20).fill('');r[6]='Searching';assert.equal(teamFor(r),'Search');r[6]='Typing';assert.equal(teamFor(r),'Type');r[6]='Specs-Standards';assert.equal(teamFor(r),'');r[7]='15.08 - Triage Delay';assert.equal(teamFor(r),'Triage');r[7]='Other error';r[8]='sent to VM to review';assert.equal(teamFor(r),'');r[6]='VM team';assert.equal(teamFor(r),'VM team');});
 test('identical source rows remain distinct occurrences',()=>{assert.notEqual(rowId(['same'],0),rowId(['same'],1));});
+test('native error identity comes from the status link and must match its order',()=>{
+ const order='https://tv.datatracetitle.com/OrderOverview.aspx?PublicOrderId=order-1';
+ const link=id=>`showModalPopupPage('UserErrors.aspx?EditMode=Status&UserErrorId=${id}&PublicOrderId=order-1',400,930);`;
+ assert.equal(sourceErrorId([link(123)],order),'123');assert.equal(sourceErrorId([],order),null);
+ assert.throws(()=>sourceErrorId([link(123),link(456)],order));
+ assert.throws(()=>sourceErrorId([link(123).replace('order-1','order-2')],order));
+ assert.notEqual(sourceErrorId([link(123)],order),sourceErrorId([link(456)],order));
+});
 test('a missing product number cannot match an empty product field',()=>{const row=Array(20).fill('');row[9]='Full Title';assert.throws(()=>selectProduct([{name:'Full Title',external:'001',originator:'',cancelled:''},{name:'Full Title',external:'002',originator:'other',cancelled:''}],row));});
 
 function repeatedUpdates(){

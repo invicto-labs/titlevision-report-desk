@@ -1,7 +1,7 @@
 import os,sys,uuid,unittest,threading,json,urllib.request,urllib.error
 from pathlib import Path
 from datetime import datetime,timedelta
-from unittest.mock import patch
+from unittest.mock import patch,MagicMock
 testdata=Path(__file__).resolve().parent/'results'/uuid.uuid4().hex;testdata.mkdir(parents=True);os.environ['TITLEVISION_DATA']=str(testdata)
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]));import server
 class ServerTests(unittest.TestCase):
@@ -131,4 +131,34 @@ class ServerTests(unittest.TestCase):
    server.install_schedule(False)
    self.assertEqual((folder/'script-ran.txt').read_text(),'ran')
    self.assertEqual(os.environ['PSExecutionPolicyPreference'],'Restricted')
+ def test_phase2_api_stays_off_before_october_and_requires_delete_confirmation(self):
+  from datetime import date
+  with patch.object(server.monthly_sync,'today',return_value=date(2026,9,30)):
+   req=urllib.request.Request(self.url+'/api/main/create',json.dumps({'month':'2026-10'}).encode(),headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN})
+   with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(req)
+   self.assertIn('1 October',error.exception.read().decode())
+  with patch.object(server.monthly_sync,'delete') as delete:
+   req=urllib.request.Request(self.url+'/api/main/delete',json.dumps({'month':'2026-10'}).encode(),headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN})
+   with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
+   delete.assert_not_called()
+ def test_daily_phase2_refresh_runs_after_validation_and_failure_keeps_daily_downloadable(self):
+  from datetime import date
+  rid=uuid.uuid4().hex;folder=server.DATA/'runs'/rid
+  with server.db() as c:c.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,'2026-10-01','2026-10-01','queued','test','now',None,None,0,None))
+  def process(args,directory,*a,**kw):
+   (directory/'issues.json').write_text('[]')
+   (directory/'validation.json').write_text(json.dumps({'passed':True,'count':1,'points':3}))
+  def refresh(*args):
+   self.assertTrue((folder/'validation.json').exists())
+   self.assertEqual(args[-1],'2026-10')
+   raise ValueError('Simulated month export failure')
+  lock=MagicMock()
+  try:
+   with patch.object(server.monthly_sync,'today',return_value=date(2026,10,2)),patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.monthly_sync,'refresh',side_effect=refresh) as sync:
+    server.perform(rid,lock);sync.assert_called_once()
+   with server.db() as c:run=c.execute('SELECT * FROM runs WHERE id=?',(rid,)).fetchone()
+   self.assertEqual(run['status'],'review');self.assertEqual(run['count'],1);self.assertEqual(run['points'],3)
+   self.assertEqual(json.loads((folder/'issues.json').read_text())[0]['kind'],'month_refresh');lock.__exit__.assert_called_once()
+  finally:
+   with server.db() as c:c.execute('DELETE FROM runs WHERE id=?',(rid,))
 if __name__=='__main__':unittest.main()

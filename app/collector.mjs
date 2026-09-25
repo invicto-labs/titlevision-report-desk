@@ -1,13 +1,13 @@
 import {chromium} from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {EXPORT_HEADERS,siteDate,plusDays,rowId,selectProduct,taskNames,validateRows} from './rules.mjs';
+import {EXPORT_HEADERS,siteDate,plusDays,rowId,selectProduct,taskNames,validateRows,sourceErrorId} from './rules.mjs';
 let input='';for await(const c of process.stdin)input+=c;const job=JSON.parse(input);input='';
 const dir=path.resolve(job.directory);const emit=(phase,message,extra={})=>console.log(JSON.stringify({phase,message,...extra}));
 const BASE='https://tv.datatracetitle.com';let browser,activePage;const network=[];
 const normalize=s=>String(s??'').replace(/\u00a0/g,' ').trim();
 async function postback(page,locator){const response=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().includes('UserErrors.aspx'),{timeout:60000});await locator.click();await(await response).finished();await page.waitForLoadState('networkidle');}
-async function grid(page){return page.locator('#_uec__gvUserErrors').evaluate(t=>({headers:[...t.querySelectorAll('th')].map(e=>e.innerText.trim()),rows:[...t.querySelectorAll('tr')].filter(r=>r.querySelector('a[href*="OrderOverview.aspx"]')).map(r=>({values:[...r.cells].slice(1).map(c=>(c.innerText||'').replace(/\u00a0/g,' ').trim()),url:new URL(r.querySelector('a[href*="OrderOverview.aspx"]').getAttribute('href'),location.href).href})),pages:[...t.querySelectorAll('a[href*="Page$"]')].map(a=>({text:a.innerText,href:a.getAttribute('href')}))}));}
+async function grid(page){const result=await page.locator('#_uec__gvUserErrors').evaluate(t=>({headers:[...t.querySelectorAll('th')].map(e=>e.innerText.trim()),rows:[...t.querySelectorAll('tr')].filter(r=>r.querySelector('a[href*="OrderOverview.aspx"]')).map(r=>({values:[...r.cells].slice(1).map(c=>(c.innerText||'').replace(/\u00a0/g,' ').trim()),url:new URL(r.querySelector('a[href*="OrderOverview.aspx"]').getAttribute('href'),location.href).href,errorLinks:[...r.querySelectorAll('a')].map(a=>a.getAttribute('onclick')||a.getAttribute('href'))})),pages:[...t.querySelectorAll('a[href*="Page$"]')].map(a=>({text:a.innerText,href:a.getAttribute('href')}))}));for(const row of result.rows){row.sourceId=sourceErrorId(row.errorLinks,row.url);delete row.errorLinks;}return result;}
 try{
  emit('login','Signing in to TitleVision');
  browser=await chromium.launch({channel:'msedge',headless:!job.headed,...(job.headed?{args:['--start-minimized']}:{})});const context=await browser.newContext({acceptDownloads:true});const page=await context.newPage();activePage=page;page.setDefaultTimeout(30000);page.setDefaultNavigationTimeout(60000);

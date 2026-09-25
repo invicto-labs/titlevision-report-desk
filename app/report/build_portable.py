@@ -45,7 +45,11 @@ def build(folder):
  sheet.data_validation(1,22,max(n,1),22,{'validate':'list','source':['Search','Type','Triage','VM team'],'error_type':'stop','error_title':'Choose a team','error_message':'Select Search, Type, Triage or VM team.'})
  summary.set_default_row(25)
  for j,width in enumerate([25,14,15,4,23,14,15,4,23,14,15]):summary.set_column(j,j,width)
- summary.merge_range('A2:K2','TitleVision Error Report — '+title,fmt(bold=True,font_size=14,font_color=navy))
+ heading='TitleVision Error Report — '+title
+ if collection.get('mainMonth'):
+  from datetime import date
+  heading=date.fromisoformat(collection['mainMonth']+'-01').strftime('%B %Y')+' Main Workbook'
+ summary.merge_range('A2:K2',heading,fmt(bold=True,font_size=14,font_color=navy))
  summary.set_row(1,34)
  for p in payload['specs']:
   matrix=[['','Values',''],[p['title'],'Error Count','Error Points']]
@@ -64,6 +68,8 @@ def build(folder):
     summary.write(r,p['col']+j,value,fmt(**props))
  notes=max(25,*(p['row']+p['height']+2 for p in payload['specs'] if p['col']>0))
  texts=[(0,'Double-click a PivotTable count or points total to open its full records.'),(2,'After changing Team, select Data → Refresh All to update the PivotTables.'),(4,'Team options: Search, Type, Triage, VM team.'),(6,'(blank) means no team or contributor is assigned. A blank Typer means no human typing task was recorded.'),(8,'Source: TitleVision All Errors, created '+title+'.')]
+ if collection.get('mainMonth'):
+  texts[-1]=(8,'Only approved daily reports are included. Status and points checked through '+collection['syncThrough']+'.' if collection.get('syncThrough') else 'Empty monthly workbook. Add a verified daily report to begin.')
  for offset,text in texts:
   r=notes+offset-1;summary.merge_range(r,4,r,10,text,fmt(**border));summary.set_row(r,42 if offset==6 else 34)
  wb.close()

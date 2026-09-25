@@ -14,6 +14,29 @@ India-time collection. Each scheduled run collects the previous calendar day.
 
 ## Main monthly workbook
 
+### Phase 2 from October 2026
+
+Version 1.4.0 enables workbook creation, removal and month-to-date status refresh
+on 1 October 2026 in India time, for October and later months. September remains
+on the existing workflow. The daily schedule still collects the previous calendar
+day, so October 1 itself collects September 30.
+
+After daily collection, the app downloads all errors created from the month's
+first day through the latest completed day and reconciles the export against the
+site. Existing approved rows receive their latest status, points and Last Updated
+Date, matched by the native TitleVision error ID and checked against order/date.
+Repeated order numbers and different errors on the same date stay separate.
+Non-chargeable points are copied exactly from the source. Unknown or missing
+identities stop monthly publication; the previous workbook remains downloadable.
+
+The Yes/No choice still controls new daily rows. Choosing Yes rechecks the month
+before adding the selected dates and rebuilding all PivotTables. A separate
+Refresh status button refreshes already-approved rows. Create monthly workbook
+starts an empty month; Delete workbook removes its published entry and approvals,
+retains daily reports and internal revisions, and allows reapproval to rebuild it.
+Successful revisions publish atomically after validation. Download the latest
+main Excel from the app; already-downloaded copies do not update themselves.
+
 After a report completes, choose **Yes, add to main workbook** or **No, keep separate**.
 Only approved reports enter the monthly workbook. Scheduled runs also wait for a choice.
 The **Main monthly workbook** panel has one download per month; all approved records

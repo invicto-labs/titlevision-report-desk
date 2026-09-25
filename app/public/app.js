@@ -21,7 +21,17 @@ $('clear-github-access').onclick=async()=>{try{await api('/api/update/token',{to
 
 function mainBooksDisplay(){
  const books=state.mainBooks||[];
- $('main-books').innerHTML=books.length?books.map(b=>`<tr><td><strong>${esc(b.month)}</strong></td><td>${esc(b.start)} – ${esc(b.end)}<br><small>${b.days} approved day(s)</small></td><td>${b.count}</td><td>${b.points}</td><td><a href="/api/main/${encodeURIComponent(b.month)}/download">Download main Excel</a></td></tr>`).join(''):'<tr><td colspan="5" class="empty">No main workbook yet. Complete a report, then choose Yes to add it.</td></tr>';
+ const enabled=state.phase2?.enabled,blocked=mainBusy||state.runs.some(r=>['running','queued'].includes(r.status))||['downloading','installing'].includes(state.update?.phase);
+ $('phase2-note').textContent=enabled?'October 2026 onward: after daily collection, the app checks statuses and points from the first of the month through the latest completed day. Only approved reports enter the workbook. PivotTables rebuild after all checks pass.':'Workbook creation, removal and month-to-date status refresh start on 1 October 2026. September workbooks keep their existing behavior.';
+ $('create-main-form').hidden=!enabled;$('create-main').disabled=blocked;
+ if(!$('main-month').value)$('main-month').value=enabled?state.phase2.currentMonth:'2026-10';
+ $('main-month').max=state.phase2?.currentMonth||'';
+ $('main-books').innerHTML=books.length?books.map(b=>{
+  const managed=enabled&&b.month>='2026-10';
+  const name=new Date(b.month+'-01T12:00:00').toLocaleDateString('en-IN',{month:'long',year:'numeric'})+' workbook';
+  const refresh=b.syncStatus==='running'?'Refreshing — last verified workbook shown':b.syncStatus==='failed'?'Refresh failed — previous workbook retained':b.syncStatus==='empty'?'Empty workbook':b.syncedAt?'Verified '+new Date(b.syncedAt).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'}):'Approved daily snapshots';
+  return `<tr><td><strong>${esc(name)}</strong></td><td>${b.days?esc(b.start)+' – '+esc(b.end):'No approved dates'}<br><small>${b.days} approved day(s)</small></td><td class="sync-cell">${esc(refresh)}${b.syncThrough?'<br><small>Checked through '+esc(b.syncThrough)+'</small>':''}${b.syncStatus==='failed'?'<br><small>'+esc(b.syncMessage)+'</small>':''}</td><td>${b.count}</td><td>${b.points}</td><td><a href="/api/main/${encodeURIComponent(b.month)}/download">Download main Excel</a>${managed?`<div class="book-actions"><button data-month="${esc(b.month)}" data-action="refresh" ${blocked?'disabled':''}>Refresh status</button><button data-month="${esc(b.month)}" data-action="delete" ${blocked?'disabled':''}>Delete workbook</button></div>`:''}</td></tr>`;
+ }).join(''):'<tr><td colspan="6" class="empty">No main workbook yet. Complete a report and choose Yes, or create an empty workbook from October onward.</td></tr>';
 }
 function mainChoiceDisplay(r){
  const ready=r&&['complete','review'].includes(r.status);$('main-choice').hidden=!ready;if(!ready)return;
@@ -29,7 +39,7 @@ function mainChoiceDisplay(r){
  $('main-yes').hidden=r.mainChoice==='yes';$('main-no').hidden=!!r.mainChoice;
  $('main-yes').textContent=r.mainChoice==='no'?'Add this report now':'Yes, add to main workbook';
  $('main-yes').disabled=mainBusy;$('main-no').disabled=mainBusy;
- if(!mainBusy)$('main-choice-status').textContent=r.mainChoice==='yes'?'This report was added. Download the latest monthly workbook below.':r.mainChoice==='no'?'Not added. Your main workbook is unchanged.':'Waiting for your choice. Nothing is added automatically.';
+ if(!mainBusy)$('main-choice-status').textContent=r.mainChoice==='yes'?'This report was added. Download the latest monthly workbook below.':r.mainChoice==='no'?'Daily rows not added. Existing approved rows may receive status and points updates.':state.phase2?.enabled&&r.end>='2026-10-01'?'Choose Yes to add these dates, verify month-to-date statuses and points, then rebuild the monthly PivotTables. No keeps this daily report separate.':'Waiting for your choice. Nothing is added automatically.';
 }
 async function chooseMain(add){
  if(mainBusy||!selected)return;const rid=selected;mainBusy=true;mainChoiceDisplay(state.runs.find(r=>r.id===rid));updateDisplay();$('run').disabled=true;
@@ -39,6 +49,16 @@ async function chooseMain(add){
  finally{mainBusy=false;await refreshWithVersion();}
 }
 $('main-yes').onclick=()=>chooseMain(true);$('main-no').onclick=()=>chooseMain(false);
+async function manageMain(action,month){
+ if(mainBusy)return;
+ if(action==='delete'&&!window.confirm(`Delete the ${month} main workbook and remove its approvals? Daily reports are kept so you can rebuild it.`))return;
+ mainBusy=true;mainBooksDisplay();updateDisplay();notice(action==='refresh'?'Checking month-to-date data and rebuilding the workbook…':action==='create'?'Creating monthly workbook…':'Removing monthly workbook…');
+ try{const result=await api('/api/main/'+action,{month,...(action==='delete'?{confirm:true}:{})});notice(result.message);}
+ catch(e){notice(e.message,true);}
+ finally{mainBusy=false;await refreshWithVersion();}
+}
+$('create-main-form').onsubmit=e=>{e.preventDefault();manageMain('create',$('main-month').value);};
+$('main-books').onclick=e=>{const button=e.target.closest('button[data-action]');if(button)manageMain(button.dataset.action,button.dataset.month);};
 
 async function refreshWithVersion(){await refresh();updateDisplay();}refreshWithVersion();setInterval(refreshWithVersion,5000);
 if(document.modelContext?.registerTool){

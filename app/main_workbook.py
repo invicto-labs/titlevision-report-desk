@@ -12,10 +12,12 @@ def initialize(connection):
     connection.execute('CREATE TABLE IF NOT EXISTS main_choices (run_id TEXT PRIMARY KEY, choice TEXT NOT NULL)')
     connection.execute('CREATE TABLE IF NOT EXISTS main_days (day TEXT PRIMARY KEY, run_id TEXT NOT NULL)')
     connection.execute('CREATE TABLE IF NOT EXISTS main_books (month TEXT PRIMARY KEY, folder TEXT NOT NULL, start TEXT, end TEXT, count INTEGER, points REAL, days INTEGER, updated TEXT)')
+    connection.execute('CREATE TABLE IF NOT EXISTS main_snapshots (month TEXT PRIMARY KEY, folder TEXT NOT NULL, through_date TEXT NOT NULL, checked_at TEXT NOT NULL)')
+    connection.execute('CREATE TABLE IF NOT EXISTS main_sync_state (month TEXT PRIMARY KEY, status TEXT NOT NULL, message TEXT NOT NULL, updated TEXT NOT NULL)')
 
 
 def books(connection):
-    return [dict(r) for r in connection.execute('SELECT month,start,end,count,points,days,updated FROM main_books ORDER BY month DESC')]
+    return [dict(r) for r in connection.execute('SELECT b.month,b.start,b.end,b.count,b.points,b.days,b.updated,s.through_date AS syncThrough,s.checked_at AS syncedAt,x.status AS syncStatus,x.message AS syncMessage FROM main_books b LEFT JOIN main_snapshots s ON s.month=b.month LEFT JOIN main_sync_state x ON x.month=b.month ORDER BY b.month DESC')]
 
 
 def days_between(start, end):
