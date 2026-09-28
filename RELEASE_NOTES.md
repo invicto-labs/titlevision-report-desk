@@ -1,3 +1,14 @@
+## Version 1.4.2
+
+- Fix “TitleVision error columns changed” when the site returns its explicit “No errors found” table without normal column headers.
+- Accept only a first-page, unpaged empty result with no error rows. Keep strict schema checks for populated tables and reject missing or conflicting empty-result evidence.
+- Save empty contributor data so verified zero-error collections can complete the normal report pipeline.
+- Verify the empty native export's “No errors found” result, inclusive/exclusive dates and all filter criteria before accepting zero errors.
+- Save observed grid headings and empty-result details when validation fails, improving diagnostics for future site changes.
+- Preserve native export reconciliation, existing reports, monthly approval and October status-refresh behavior.
+
+After updating, rerun a failed empty date. A verified empty collection produces a report with zero errors and zero points.
+
 ## Version 1.4.1
 
 - Clarify the full set of TitleVision statuses in the report screen: New, Accepted, Auto-Accepted, Disputed, Non-Chargeable and Chargeable.

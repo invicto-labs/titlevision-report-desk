@@ -50,6 +50,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Activation tests failed' }
           python app/tests/test_report.py
           if ($LASTEXITCODE -ne 0) { throw 'Workbook tests failed' }
+          python app/tests/test_reconcile.py
+          if ($LASTEXITCODE -ne 0) { throw 'Export reconciliation tests failed' }
           python app/tests/test_main_workbook.py
           if ($LASTEXITCODE -ne 0) { throw 'Main workbook continuity tests failed' }
           python app/tests/test_monthly_sync.py

@@ -1,13 +1,13 @@
 import {chromium} from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {EXPORT_HEADERS,siteDate,plusDays,rowId,selectProduct,taskNames,validateRows,sourceErrorId} from './rules.mjs';
+import {siteDate,plusDays,rowId,selectProduct,taskNames,validateRows,sourceErrorId,validateErrorGrid} from './rules.mjs';
 let input='';for await(const c of process.stdin)input+=c;const job=JSON.parse(input);input='';
 const dir=path.resolve(job.directory);const emit=(phase,message,extra={})=>console.log(JSON.stringify({phase,message,...extra}));
 const BASE='https://tv.datatracetitle.com';let browser,activePage;const network=[];
 const normalize=s=>String(s??'').replace(/\u00a0/g,' ').trim();
 async function postback(page,locator){const response=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().includes('UserErrors.aspx'),{timeout:60000});await locator.click();await(await response).finished();await page.waitForLoadState('networkidle');}
-async function grid(page){const result=await page.locator('#_uec__gvUserErrors').evaluate(t=>({headers:[...t.querySelectorAll('th')].map(e=>e.innerText.trim()),rows:[...t.querySelectorAll('tr')].filter(r=>r.querySelector('a[href*="OrderOverview.aspx"]')).map(r=>({values:[...r.cells].slice(1).map(c=>(c.innerText||'').replace(/\u00a0/g,' ').trim()),url:new URL(r.querySelector('a[href*="OrderOverview.aspx"]').getAttribute('href'),location.href).href,errorLinks:[...r.querySelectorAll('a')].map(a=>a.getAttribute('onclick')||a.getAttribute('href'))})),pages:[...t.querySelectorAll('a[href*="Page$"]')].map(a=>({text:a.innerText,href:a.getAttribute('href')}))}));for(const row of result.rows){row.sourceId=sourceErrorId(row.errorLinks,row.url);delete row.errorLinks;}return result;}
+async function grid(page){const result=await page.locator('#_uec__gvUserErrors').evaluate(t=>({headers:[...t.querySelectorAll('th')].map(e=>e.innerText.trim()),empty:[...t.querySelectorAll('tr')].some(r=>r.cells.length===1&&/^No errors found[.!]?$/i.test(r.innerText.trim())),rows:[...t.querySelectorAll('tr')].filter(r=>r.querySelector('a[href*="OrderOverview.aspx"]')).map(r=>({values:[...r.cells].slice(1).map(c=>(c.innerText||'').replace(/\u00a0/g,' ').trim()),url:new URL(r.querySelector('a[href*="OrderOverview.aspx"]').getAttribute('href'),location.href).href,errorLinks:[...r.querySelectorAll('a')].map(a=>a.getAttribute('onclick')||a.getAttribute('href'))})),pages:[...t.querySelectorAll('a[href*="Page$"]')].map(a=>({text:a.innerText,href:a.getAttribute('href')}))}));for(const row of result.rows){row.sourceId=sourceErrorId(row.errorLinks,row.url);delete row.errorLinks;}return result;}
 try{
  emit('login','Signing in to TitleVision');
  browser=await chromium.launch({channel:'msedge',headless:!job.headed,...(job.headed?{args:['--start-minimized']}:{})});const context=await browser.newContext({acceptDownloads:true});const page=await context.newPage();activePage=page;page.setDefaultTimeout(30000);page.setDefaultNavigationTimeout(60000);
@@ -41,7 +41,8 @@ try{
  const rows=[];const seenPages=new Set();let pageNo=1;
  for(;;){
   if(await page.locator('#_uec__gvUserErrors').count()===0){const text=await page.locator('body').innerText();if(/no (records|errors|results|data).*found/i.test(text)){break;}throw Error('Error grid missing; cannot confirm an empty report');}
-  const g=await grid(page);if(JSON.stringify(g.headers.slice(1))!==JSON.stringify(EXPORT_HEADERS))throw Error('TitleVision error columns changed');
+  const g=await grid(page);
+  try{validateErrorGrid(g,pageNo);}catch(e){await fs.writeFile(path.join(dir,'error-grid-review.json'),JSON.stringify({pageNo,headers:g.headers,rowCount:g.rows.length,empty:g.empty,pages:g.pages},null,2));throw e;}
   const signature=JSON.stringify(g.rows);if(seenPages.has(signature))throw Error('Repeated result page');seenPages.add(signature);rows.push(...g.rows);
   const next=g.pages.find(p=>p.text.trim()===String(pageNo+1))||g.pages.find(p=>/Page\$Next/.test(p.href));if(!next){if(g.pages.some(p=>/Page\$(Last|\d+)/.test(p.href)&&Number(p.text)>pageNo))throw Error('Cannot verify all result pages');break;}
   if(++pageNo>1000)throw Error('Too many result pages');await postback(page,page.locator('#_uec__gvUserErrors a').filter({hasText:new RegExp('^'+next.text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$')}).first());
@@ -76,6 +77,7 @@ try{
  }
  if(!job.exportOnly){
  const detail=await context.newPage();detail.setDefaultTimeout(30000);detail.setDefaultNavigationTimeout(60000);const staff={};const cache=new Map();
+ await fs.writeFile(path.join(dir,'staff.json'),JSON.stringify(staff,null,2));
  for(let i=0;i<rows.length;i++){
   const row=rows[i],v=row.values;emit('history',`Checking ${i+1} of ${rows.length}: ${v[1]}`,{done:i,total:rows.length});
   if(new URL(row.url).origin!==BASE)throw Error('Unexpected order destination');

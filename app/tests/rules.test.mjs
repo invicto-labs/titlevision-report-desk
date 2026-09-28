@@ -1,5 +1,17 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {plusDays,serial,selectProduct,taskNames,teamFor,validateRows,rowId,sourceErrorId} from '../rules.mjs';
+import {plusDays,serial,selectProduct,taskNames,teamFor,validateRows,rowId,sourceErrorId,validateErrorGrid,EXPORT_HEADERS} from '../rules.mjs';
+test('TitleVision explicit empty table has no normal headers and is valid only on the first unpaged result',()=>{
+ const grid={headers:[],rows:[],pages:[],empty:true};assert.doesNotThrow(()=>validateErrorGrid(grid,1));
+ assert.throws(()=>validateErrorGrid(grid,2));assert.throws(()=>validateErrorGrid({...grid,pages:[{text:'2'}]},1));
+ assert.throws(()=>validateErrorGrid({...grid,empty:false},1));
+ assert.throws(()=>validateErrorGrid({...grid,headers:['',...EXPORT_HEADERS],empty:false},1));
+});
+test('normal grid schema remains enforced and cannot mix error records with an empty marker',()=>{
+ const grid={headers:['',...EXPORT_HEADERS],rows:[{values:Array(20).fill('')}],pages:[],empty:false};
+ assert.doesNotThrow(()=>validateErrorGrid(grid,1));assert.doesNotThrow(()=>validateErrorGrid(grid,2));
+ assert.throws(()=>validateErrorGrid({...grid,headers:['',...EXPORT_HEADERS.slice(0,-1)]},1));
+ assert.throws(()=>validateErrorGrid({...grid,empty:true},1));
+});
 test('calendar boundaries and midnight inclusion',()=>{assert.equal(plusDays('2026-01-01',-1),'2025-12-31');assert.equal(plusDays('2028-03-01',-1),'2028-02-29');assert.throws(()=>serial('2/30/2026'));const values=Array(20).fill('');Object.assign(values,{1:'Order',9:'Full Title',12:'9/16/2026 12:00:00 AM',15:'1'});assert.equal(validateRows([{values}],'2026-09-16','2026-09-16').count,1);values[12]='9/17/2026 12:00:00 AM';assert.throws(()=>validateRows([{values}],'2026-09-16','2026-09-16'));});
 test('last completed human task includes blank task continuations',()=>{const r=(task,user,end)=>['',task,'9/15/2026 1:00:00 AM',user,'9/15/2026 1:00:00 AM',end];assert.deepEqual(taskNames([r('Search','First_ADSSearchType','9/15/2026 2:00:00 AM'),r('','Last_ADSSearchType','9/15/2026 3:00:00 AM'),r('','OWLServiceUser','9/15/2026 4:00:00 AM'),r('TypingModule','Typer_ADSSearchType','9/15/2026 5:00:00 AM'),r('','Unfinished_ADSSearchType','')]),['Last_ADSSearchType','Typer_ADSSearchType']);assert.deepEqual(taskNames([r('UpdateSearch','A_ADSSearchType','9/15/2026 2:00:00 AM')]),['A_ADSSearchType','']);});
 test('conflicting last humans stop attribution',()=>{assert.throws(()=>taskNames([['','Search','','A','9/15/2026 1:00:00 AM','9/15/2026 2:00:00 AM'],['','','','B','9/15/2026 1:00:00 AM','9/15/2026 2:00:00 AM']]));});

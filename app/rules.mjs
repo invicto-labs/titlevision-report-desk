@@ -1,5 +1,13 @@
 import crypto from 'node:crypto';
 export const EXPORT_HEADERS=['Status','Order Number','Vendor','User','Team','Task','Error Category Type','Error Category Sub Type','Notes','Product','Reported By','Created By','Created Date','Region','State','Points','Last Updated Date','Error Committed Date','EPON','PriceType'];
+export function validateErrorGrid(grid,pageNo){
+ // ASP.NET replaces the entire grid with one "No errors found" cell, without
+ // the normal headings. Only accept that explicit first-page empty state.
+ if(grid.empty&&grid.rows.length===0&&grid.pages.length===0&&pageNo===1)return;
+ if(JSON.stringify(grid.headers.slice(1))!==JSON.stringify(EXPORT_HEADERS))throw Error('TitleVision error columns changed');
+ if(grid.empty)throw Error('Conflicting TitleVision empty-result marker');
+ if(grid.rows.length===0)throw Error('Empty error grid without a confirmed no-errors result');
+}
 export function isoDate(s){if(!/^\d{4}-\d{2}-\d{2}$/.test(s)||new Date(s+'T00:00:00Z').toISOString().slice(0,10)!==s)throw Error('Invalid date');return s;}
 export function siteDate(s){const [y,m,d]=isoDate(s).split('-').map(Number);return `${m}/${d}/${y}`;}
 export function plusDays(s,n){const d=new Date(isoDate(s)+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);}
