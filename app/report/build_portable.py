@@ -29,7 +29,7 @@ def build(folder):
   for j,value in enumerate(row):
    opts=dict(border)
    if i%2:opts['bg_color']='#EDF2F7'
-   if j in (7,8):opts['valign']='top'
+   if j in (7,8,25,27):opts['valign']='top'
    if j in (10,14,15):opts['num_format']='m/d/yyyy h:mm:ss AM/PM' if j==10 else 'm/d/yyyy'
    if j==13:opts.update(num_format='0',align='right')
    if j==22:opts.update(bg_color='#FFF2CC',align='center')

@@ -22,7 +22,7 @@ $('clear-github-access').onclick=async()=>{try{await api('/api/update/token',{to
 function mainBooksDisplay(){
  const books=state.mainBooks||[];
  const enabled=state.phase2?.enabled,blocked=mainBusy||state.runs.some(r=>['running','queued'].includes(r.status))||['downloading','installing'].includes(state.update?.phase);
- $('phase2-note').textContent=enabled?'October 2026 onward: after daily collection, the app checks statuses and points from the first of the month through the latest completed day. Only approved reports enter the workbook. PivotTables rebuild after all checks pass.':'Workbook creation, removal and month-to-date status refresh start on 1 October 2026. September workbooks keep their existing behavior.';
+ $('phase2-note').textContent=enabled?'October 2026 onward: after daily collection, the app checks statuses, points and dispute/client comments from the first of the month through the latest completed day. Only approved reports enter the workbook. PivotTables rebuild after all checks pass.':'Workbook creation, removal and month-to-date status refresh start on 1 October 2026. September workbooks keep their existing behavior.';
  $('create-main-form').hidden=!enabled;$('create-main').disabled=blocked;
  if(!$('main-month').value)$('main-month').value=enabled?state.phase2.currentMonth:'2026-10';
  $('main-month').max=state.phase2?.currentMonth||'';
@@ -39,7 +39,7 @@ function mainChoiceDisplay(r){
  $('main-yes').hidden=r.mainChoice==='yes';$('main-no').hidden=!!r.mainChoice;
  $('main-yes').textContent=r.mainChoice==='no'?'Add this report now':'Yes, add to main workbook';
  $('main-yes').disabled=mainBusy;$('main-no').disabled=mainBusy;
- if(!mainBusy)$('main-choice-status').textContent=r.mainChoice==='yes'?'This report was added. Download the latest monthly workbook below.':r.mainChoice==='no'?'Daily rows not added. Existing approved rows may receive status and points updates.':state.phase2?.enabled&&r.end>='2026-10-01'?'Choose Yes to add these dates, verify month-to-date statuses and points, then rebuild the monthly PivotTables. No keeps this daily report separate.':'Waiting for your choice. Nothing is added automatically.';
+ if(!mainBusy)$('main-choice-status').textContent=r.mainChoice==='yes'?'This report was added. Download the latest monthly workbook below.':r.mainChoice==='no'?'Daily rows not added. Existing approved rows may receive status, points and comment updates.':state.phase2?.enabled&&r.end>='2026-10-01'?'Choose Yes to add these dates, verify month-to-date statuses, points and comments, then rebuild the monthly PivotTables. No keeps this daily report separate.':'Waiting for your choice. Nothing is added automatically.';
 }
 async function chooseMain(add){
  if(mainBusy||!selected)return;const rid=selected;mainBusy=true;mainChoiceDisplay(state.runs.find(r=>r.id===rid));updateDisplay();$('run').disabled=true;

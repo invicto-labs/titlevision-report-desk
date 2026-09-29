@@ -3,6 +3,7 @@ from collections import Counter,defaultdict,deque
 from datetime import datetime,date,timedelta
 from pathlib import Path
 import json,sys,openpyxl,re,hashlib
+from status_history import fields as status_fields
 HEADERS=['Status','Order Number','Vendor','User','Team','Task','Error Category Type','Error Category Sub Type','Notes','Product','Reported By','Created By','Created Date','Region','State','Points','Last Updated Date','Error Committed Date','EPON','PriceType']
 def norm(v):
  if v is None:return ''
@@ -54,11 +55,16 @@ def reconcile(directory):
   exported=[]
  else:exported=[r[:20] for r in allrows[header+1:] if any(v is not None for v in r)]
  if Counter(canonical(r) for r in exported)!=Counter(canonical(r['values']) for r in source):raise ValueError('The downloaded export and collected error rows differ. Report withheld.')
+ collection=json.loads((root/'collection.json').read_text(encoding='utf8')) if (root/'collection.json').exists() else {}
  pool=defaultdict(deque)
  for r in exported:pool[canonical(r)].append([norm(v) for v in r])
  original=root/'browser-source.json'
  if not original.exists():original.write_text(json.dumps(source,ensure_ascii=False,indent=2),encoding='utf8')
- for row in source:row['values']=pool[canonical(row['values'])].popleft()
+ for row in source:
+  row['values']=pool[canonical(row['values'])].popleft()
+  # Derive from the verified popup after the native export matches the grid.
+  # Legacy saved exports remain readable; fresh non-New collections must carry history.
+  row['statusFields']=status_fields(row,required=collection.get('statusHistoryVersion')==1 or bool(row.get('statusHistory')))
  (root/'source.json').write_text(json.dumps(source,ensure_ascii=False,indent=2),encoding='utf8')
  (root/'reconciled.json').write_text(json.dumps({'count':len(source),'sourceSha256':hashlib.sha256((root/'source.json').read_bytes()).hexdigest(),'exportSha256':hashlib.sha256((root/'source.xlsx').read_bytes()).hexdigest()}),encoding='utf8')
  print(f'Reconciled all {len(exported)} exported error rows.')

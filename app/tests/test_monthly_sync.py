@@ -7,6 +7,7 @@ from xml.etree import ElementTree as ET
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import main_workbook as main
 import monthly_sync as sync
+from status_history import fields as status_fields
 ROOT=Path(__file__).resolve().parents[1]
 SITE_STATUSES=('New','Accepted','Auto-Accepted','Disputed','Non-Chargeable','Chargeable')
 
@@ -42,6 +43,13 @@ class MonthlySyncTests(unittest.TestCase):
  def fetch(self,start,end,folder):
   self.fetches.append((start,end))
   source=copy.deepcopy(self.live)
+  for record in source:
+   status=record['values'][0]
+   if status!='New' and 'statusHistory' not in record:
+    key=record['sourceId'];order='example-order'
+    record['statusHistory']={'schema':1,'sourceId':key,'orderId':order,'url':f'https://tv.datatracetitle.com/UserErrors.aspx?EditMode=Status&UserErrorId={key}&PublicOrderId={order}',
+     'status':status,'vendor':record['values'][2],'vendorUsers':['VendorUser'],'comments':[['10/2/2026 1:00:00 AM','VendorUser','Our reply'],['10/3/2026 1:00:00 AM','ClientUser','Client reply']]}
+   record['statusFields']=status_fields(record,required=True)
   (folder/'source.json').write_text(json.dumps(source),encoding='utf8');(folder/'source.xlsx').write_bytes(b'verified export fixture')
   (folder/'collection.json').write_text(json.dumps({'start':start,'end':end,'count':len(source),'points':sum(float(s['values'][15]) for s in source)}))
   receipt={'count':len(source),'sourceSha256':hashlib.sha256((folder/'source.json').read_bytes()).hexdigest(),'exportSha256':hashlib.sha256((folder/'source.xlsx').read_bytes()).hexdigest()}
@@ -97,6 +105,23 @@ class MonthlySyncTests(unittest.TestCase):
     self.assertEqual(rows[0][0],status);self.assertEqual(rows[0][13],points)
     self.assertEqual(rows[0][14],(datetime(2026,10,3)-datetime(1899,12,30)).days)
     self.assertEqual(rows[0][22:24],['Search','Searcher'])
+ def test_decisions_comments_refresh_even_without_status_change_and_missing_history_retains_book(self):
+  original=self.source(1,'2026-10-01');self.live=[copy.deepcopy(original)];rid=self.seed('2026-10-01','2026-10-01',[original]);self.add(rid)
+  current=self.live[0];current['values'][0]='Non-Chargeable'
+  sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
+  self.assertEqual(self.book()[1][0][24:28],['Disputed','Our reply','Non-Chargeable','Client reply'])
+  folder=self.data/'probe';folder.mkdir();self.fetch('2026-10-01','2026-10-03',folder)
+  current['statusHistory']=json.loads((folder/'source.json').read_text())[0]['statusHistory']
+  current['statusHistory']['comments'][-1][2]='Training, reason accepted'
+  sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
+  self.assertEqual(self.book()[1][0][27],'Training, reason accepted')
+  before=self.book()[0]
+  def incomplete(a,b,f):
+   self.fetch(a,b,f)
+   rows=json.loads((f/'source.json').read_text());rows[0].pop('statusHistory');(f/'source.json').write_text(json.dumps(rows))
+   receipt=json.loads((f/'reconciled.json').read_text());receipt['sourceSha256']=hashlib.sha256((f/'source.json').read_bytes()).hexdigest();(f/'reconciled.json').write_text(json.dumps(receipt))
+  with self.assertRaisesRegex(ValueError,'history is missing'):sync.refresh(ROOT,self.data,self.db,self.build,incomplete,'2026-10')
+  self.assertEqual(self.book()[0],before)
  def test_delete_keeps_daily_reports_and_allows_reapproval(self):
   s=self.source(1,'2026-10-01');self.live=[s];rid=self.seed('2026-10-01','2026-10-01',[s]);self.add(rid)
   sync.delete(self.data,self.db,'2026-10')
@@ -142,6 +167,7 @@ class MonthlySyncTests(unittest.TestCase):
   self.assertEqual(wb['Summary']['A2'].value,'October 2026 Main Workbook')
   self.assertEqual([wb['SP 2'].cell(i+2,1).value for i in range(6)],list(SITE_STATUSES))
   self.assertEqual([wb['SP 2'].cell(i+2,14).value for i in range(6)],points)
+  self.assertEqual([wb['SP 2'].cell(7,j).value for j in range(25,29)],['Disputed','Our reply','Chargeable','Client reply'])
   self.assertEqual(len(wb['Summary']._pivots),4)
   for pivot in wb['Summary']._pivots:
    self.assertEqual(pivot.cache.recordCount,6)

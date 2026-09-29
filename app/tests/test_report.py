@@ -13,7 +13,7 @@ class ReportTests(unittest.TestCase):
     folder=app/'tests/results'/('report-'+scenario+'-'+uuid.uuid4().hex);folder.mkdir(parents=True)
     rows=[]
     for i,team in enumerate(teams):
-     r=['']*28;r[0]='New';r[1]='Test-'+str(i);r[6]='Test category';r[8]='=Literal source text';r[10]=r[14]=r[15]=46282;r[13]=i+1;r[18]='Example Searcher';r[20]='Example Typer';r[22]=team;r[23]=r[18] if team=='Search' else r[20] if team=='Type' else team;rows.append(r)
+     r=['']*28;r[0]='Non-Chargeable';r[1]='Test-'+str(i);r[6]='Test category';r[8]='=Literal source text';r[10]=r[14]=r[15]=46282;r[13]=i+1;r[18]='Example Searcher';r[20]='Example Typer';r[22]=team;r[23]=r[18] if team=='Search' else r[20] if team=='Type' else team;r[24:28]=['Disputed','=Literal vendor comment\nSecond line','Non-Chargeable','Training, reason accepted'];rows.append(r)
     specs=[]
     for name,field,title,col,row in [('ErrorsByContributor',23,'Final Error Contributor',0,5),('ErrorsByTeam',22,'Team',4,5),('ErrorsByCategory',6,'Error Category',8,5),('ErrorsByStatus',0,'Status',4,15)]:
      items=sorted({r[field] for r in rows}|({'VM team'} if field in (22,23) else set()))
@@ -34,5 +34,9 @@ class ReportTests(unittest.TestCase):
      for shared in cache.findall('x:cacheFields/x:cacheField/x:sharedItems',ns):
       if shared.get('count') is not None:self.assertEqual(shared.get('containsBlank')=='1',shared.find('x:m',ns) is not None)
     self.assertEqual(json.loads((folder/'validation.json').read_text())['workbookFormatVersion'],3)
+    if rows:
+     import openpyxl
+     sheet=openpyxl.load_workbook(folder/'report.xlsx')['SP 2']
+     self.assertEqual([sheet.cell(2,c).value for c in range(25,29)],rows[0][24:28]);self.assertEqual(sheet['Z2'].data_type,'s');self.assertTrue(sheet['AB2'].alignment.wrap_text)
     print('REPORT_FIXTURE='+str(folder/'report.xlsx'))
 if __name__=='__main__':unittest.main()

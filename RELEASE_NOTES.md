@@ -1,3 +1,14 @@
+## Version 1.4.3
+
+- Fill Inv Status, Inv Comments, Client final Status and Client Final Comments from the verified TitleVision Status popup.
+- Apply the confirmed dispute/client mapping: keep our dispute and comment, then copy the site's Chargeable/Non-Chargeable decision and the client's latest reply. Accepted and Auto-Accepted use their recorded site status.
+- Verify error ID, order, vendor and current status before attaching history. Keep different errors on a repeated order separate. Retain comment text, dates and authors in source diagnostics.
+- Refresh all four decision/comment columns alongside status and points in October monthly workbooks, including comment-only changes. Missing or conflicting source history retains the previous workbook.
+- Keep absent replies blank, flag final daily errors with missing client replies, and wrap/border both comment columns. Test literal formula-like comments and native PivotTables.
+- Preserve the October 1 activation date, monthly Yes/No approval and saved sign-in, reports and schedule.
+
+Update using Get update. Recollect older dates for a new daily report containing comments. Download the latest monthly Excel after a successful refresh; previously downloaded copies do not change themselves.
+
 ## Version 1.4.2
 
 - Fix “TitleVision error columns changed” when the site returns its explicit “No errors found” table without normal column headers.

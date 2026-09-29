@@ -24,7 +24,7 @@ day, so October 1 itself collects September 30.
 After daily collection, the app downloads all errors created from the month's
 first day through the latest completed day and reconciles the export against the
 site. Existing approved rows receive their latest status, points and Last Updated
-Date, matched by the native TitleVision error ID and checked against order/date.
+Date, plus the investigation/client decision and comment columns, matched by the native TitleVision error ID and checked against order/date.
 Repeated order numbers and different errors on the same date stay separate.
 Non-chargeable points are copied exactly from the source. Unknown or missing
 identities stop monthly publication; the previous workbook remains downloadable.
@@ -36,6 +36,29 @@ starts an empty month; Delete workbook removes its published entry and approvals
 retains daily reports and internal revisions, and allows reapproval to rebuild it.
 Successful revisions publish atomically after validation. Download the latest
 main Excel from the app; already-downloaded copies do not update themselves.
+
+### Investigation and client replies (v1.4.3)
+
+New collections read each non-New error's Status popup and verify its native error
+ID, order, vendor and current status. The source vendor user list separates our
+comments from client replies; stored dates/authors allow chronological selection.
+The four existing columns are populated without changing the workbook layout:
+
+- **Inv Status / Inv Comments:** Disputed and our latest reply for disputed errors.
+  For final Chargeable/Non-Chargeable errors with a vendor reply, the confirmed
+  reporting convention retains Disputed and the vendor reply preceding the client
+  reply. Accepted/Auto-Accepted retain their exact site status and vendor comment.
+- **Client final Status / Client Final Comments:** the source Chargeable or
+  Non-Chargeable status and latest external/client reply. Pending disputes have
+  no final client decision. No reply means a blank comment, never invented text.
+
+For example, our dispute followed by brucec's “Training, reason accepted” response
+on a Non-Chargeable error produces Disputed / our comment / Non-Chargeable / that
+reply. Status is copied from TitleVision, not inferred from comment wording.
+October month-to-date refresh also updates these four columns, even when only the
+comment changed. A missing/conflicting history stops publication and retains the
+previous workbook. Older daily downloads stay as saved; recollect their dates to
+obtain comments. Download the latest monthly workbook after a refresh.
 
 After a report completes, choose **Yes, add to main workbook** or **No, keep separate**.
 Only approved reports enter the monthly workbook. Scheduled runs also wait for a choice.

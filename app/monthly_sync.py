@@ -9,6 +9,7 @@ from urllib.parse import urlparse,parse_qs
 import calendar,hashlib,json,math,re,sys,uuid
 import main_workbook as main
 from reconcile import canonical
+from status_history import fields as status_fields
 
 START=date(2026,10,1)
 IST=timezone(timedelta(hours=5,minutes=30))
@@ -56,7 +57,10 @@ def read_snapshot(folder,start,end):
   if not start<=created<=end:raise ValueError('Month-to-date export includes an unexpected Created Date')
   value=float(values[15])
   if not math.isfinite(value) or value<0 or not values[0]:raise ValueError('Invalid current error status or points')
-  order_key(record);found[key]=record;points+=value
+  order_key(record)
+  expected=status_fields(record,required=True)
+  if record.get('statusFields',expected)!=expected:raise ValueError('Status comment fields do not match their source history')
+  found[key]=record;points+=value
  if points!=collection['points']:raise ValueError('Month-to-date source points do not match')
  return found
 def records(root,data,db,month,selected):
@@ -88,11 +92,11 @@ def overlay(entries,current):
   if order_key(original)!=order_key(latest):raise ValueError('A source error ID changed its order or Created Date; review required')
   values=latest['values'];updated=list(row)
   updated[0]=values[0];updated[13]=float(values[15])
-  # Keep contributor choices and error descriptions; refresh the source status,
-  # points and Last Updated Date only. Never force non-chargeable points to zero.
+  # Keep contributor choices/descriptions and refresh both source decisions/comments.
+  updated[24:28]=status_fields(latest,required=True)
   modified=canonical(values)[16]
   updated[14]=(datetime.fromisoformat(modified)-datetime(1899,12,30)).total_seconds()/86400 if modified else None
-  rows.append(updated);audit.append({'sourceId':key,'order':row[1],'oldStatus':row[0],'status':updated[0],'oldPoints':row[13],'points':updated[13]})
+  rows.append(updated);audit.append({'sourceId':key,'order':row[1],'oldStatus':row[0],'status':updated[0],'oldPoints':row[13],'points':updated[13],'oldDecisionFields':row[24:28],'decisionFields':updated[24:28],'commentHistory':latest.get('statusHistory')})
  return rows,audit
 def prepare(root,data,run_process,month,days,rows,audit,through,checked):
  folder=data/'main'/month/uuid.uuid4().hex;folder.mkdir(parents=True)
