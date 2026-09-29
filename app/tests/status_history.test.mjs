@@ -13,10 +13,12 @@ test('status popup reader handles source replies, omitted empty controls and rej
  const browser=await chromium.launch({channel:'msedge',headless:true});
  try{
   const context=await browser.newContext();const page=await context.newPage();let html='';
-  await context.route('https://tv.datatracetitle.com/**',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html><body>'+html+'</body></html>'}));
+  // Match TitleVision's nested error-editor tables. An unscoped tbody selector
+  // also matches the comment heading via the outer table's tbody.
+  await context.route('https://tv.datatracetitle.com/**',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html><body><table><tbody><tr><td>'+html+'</td></tr></tbody></table></body></html>'}));
   html=editor('Non-Chargeable')+history;
   let result=await readStatusHistory(page,row,'ADSSP2_Performance');
-  assert.equal(result.sourceId,'123');assert.equal(result.orderId,'order-1');assert.equal(result.comments[0][2],'Training, reason accepted\nSecond line');assert(result.vendorUsers.includes('ADSSP2_Performance'));
+  assert.equal(result.sourceId,'123');assert.equal(result.orderId,'order-1');assert.equal(result.comments.length,1);assert.equal(result.comments[0][2],'Training, reason accepted\nSecond line');assert(result.vendorUsers.includes('ADSSP2_Performance'));
   for(const status of ['Accepted','Auto-Accepted','Non-Chargeable']){
    html=editor(status);result=await readStatusHistory(page,{...row,values:[status,'','ADS SP2']},'ADSSP2_Performance');assert.deepEqual(result.comments,[]);assert.equal(result.emptyHistory,true);
   }

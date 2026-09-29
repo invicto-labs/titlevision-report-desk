@@ -1,3 +1,11 @@
+## Version 1.4.4
+
+- Include the investigation/client comment enhancement described below.
+- Scope comment data rows to their own table body. TitleVision nests this table inside an outer table body; the former selector could also read Date/Time, User, Comment as a data row and correctly withhold the report during date validation.
+- Add a regression using the live popup's nested structure, and verify the full native export and actual dispute/client example before publication.
+
+Update to v1.4.4 and rerun any collection withheld by status-comment date validation. Existing reports and October monthly-refresh behavior are preserved.
+
 ## Version 1.4.3
 
 - Fill Inv Status, Inv Comments, Client final Status and Client Final Comments from the verified TitleVision Status popup.

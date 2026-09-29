@@ -24,7 +24,9 @@ export async function readStatusHistory(page,row,username){
   const table=tables[0],headers=[...table.querySelectorAll('th')].map(e=>e.innerText.trim());
   if(JSON.stringify(headers)!==JSON.stringify(['Date/Time','User','Comment']))throw Error('TitleVision comment columns changed');
   if(table.querySelector('a[href*="Page$"]'))throw Error('Comment history pagination requires review');
-  const comments=[...table.querySelectorAll('tbody tr')].map(r=>[...r.cells].map(c=>c.innerText.replace(/\u00a0/g,' ').trim()));
+  // The popup sits inside another table's tbody. Scope direct children so the
+  // outer tbody cannot make this table's thead match the descendant selector.
+  const comments=[...table.querySelectorAll(':scope > tbody > tr')].map(r=>[...r.cells].map(c=>c.innerText.replace(/\u00a0/g,' ').trim()));
   if(comments.some(r=>r.length!==3))throw Error('TitleVision comment rows changed');
   return {status,comments,vendor:vendor.selectedOptions[0]?.text.trim(),vendorUsers:[...vendor.options].filter(o=>/^u\d+$/.test(o.value)).map(o=>o.text.trim())};
  });
