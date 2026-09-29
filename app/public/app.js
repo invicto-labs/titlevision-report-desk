@@ -30,7 +30,7 @@ function mainBooksDisplay(){
   const managed=enabled&&b.month>='2026-10';
   const name=new Date(b.month+'-01T12:00:00').toLocaleDateString('en-IN',{month:'long',year:'numeric'})+' workbook';
   const refresh=b.syncStatus==='running'?'Refreshing — last verified workbook shown':b.syncStatus==='failed'?'Refresh failed — previous workbook retained':b.syncStatus==='empty'?'Empty workbook':b.syncedAt?'Verified '+new Date(b.syncedAt).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'}):'Approved daily snapshots';
-  return `<tr><td><strong>${esc(name)}</strong></td><td>${b.days?esc(b.start)+' – '+esc(b.end):'No approved dates'}<br><small>${b.days} approved day(s)</small></td><td class="sync-cell">${esc(refresh)}${b.syncThrough?'<br><small>Checked through '+esc(b.syncThrough)+'</small>':''}${b.syncStatus==='failed'?'<br><small>'+esc(b.syncMessage)+'</small>':''}</td><td>${b.count}</td><td>${b.points}</td><td><a href="/api/main/${encodeURIComponent(b.month)}/download">Download main Excel</a>${managed?`<div class="book-actions"><button data-month="${esc(b.month)}" data-action="refresh" ${blocked?'disabled':''}>Refresh status</button><button data-month="${esc(b.month)}" data-action="delete" ${blocked?'disabled':''}>Delete workbook</button></div>`:''}</td></tr>`;
+  return `<tr><td><strong>${esc(name)}</strong></td><td>${b.days?esc(b.start)+' – '+esc(b.end):'No approved dates'}<br><small>${b.days} approved day(s)</small></td><td class="sync-cell">${esc(refresh)}${b.syncThrough?'<br><small>Checked through '+esc(b.syncThrough)+'</small>':''}${b.syncStatus==='failed'?'<br><small>'+esc(b.syncMessage)+'</small>':''}</td><td>${b.count}</td><td>${b.points}</td><td><a href="/api/main/${encodeURIComponent(b.month)}/download">Download main Excel</a>${managed?`<div class="book-actions"><button data-month="${esc(b.month)}" data-action="edits" ${blocked||!b.count?'disabled':''}>Save Excel edits</button><button data-month="${esc(b.month)}" data-action="refresh" ${blocked?'disabled':''}>Refresh status</button><button data-month="${esc(b.month)}" data-action="delete" ${blocked?'disabled':''}>Delete workbook</button></div>`:''}</td></tr>`;
  }).join(''):'<tr><td colspan="6" class="empty">No main workbook yet. Complete a report and choose Yes, or create an empty workbook from October onward.</td></tr>';
 }
 function mainChoiceDisplay(r){
@@ -51,11 +51,26 @@ async function chooseMain(add){
 $('main-yes').onclick=()=>chooseMain(true);$('main-no').onclick=()=>chooseMain(false);
 async function manageMain(action,month){
  if(mainBusy)return;
+ if(action==='edits'){chooseEditedWorkbook(month);return;}
  if(action==='delete'&&!window.confirm(`Delete the ${month} main workbook and remove its approvals? Daily reports are kept so you can rebuild it.`))return;
  mainBusy=true;mainBooksDisplay();updateDisplay();notice(action==='refresh'?'Checking month-to-date data and rebuilding the workbook…':action==='create'?'Creating monthly workbook…':'Removing monthly workbook…');
  try{const result=await api('/api/main/'+action,{month,...(action==='delete'?{confirm:true}:{})});notice(result.message);}
  catch(e){notice(e.message,true);}
  finally{mainBusy=false;await refreshWithVersion();}
+}
+function chooseEditedWorkbook(month){
+ const input=document.createElement('input');input.type='file';input.accept='.xlsx';
+ input.onchange=async()=>{
+  const file=input.files[0];if(!file||mainBusy)return;
+  if(file.size>12*1024*1024){notice('Choose an Excel workbook smaller than 12 MB.',true);return;}
+  mainBusy=true;mainBooksDisplay();updateDisplay();notice('Checking and saving your contributor edits…');
+  try{
+   const response=await fetch('/api/main/edits',{method:'POST',headers:{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','X-CSRF-Token':state.csrf,'X-Workbook-Month':month},body:file});
+   const result=await response.json();if(!response.ok)throw Error(result.error||'Edits could not be saved');notice(result.message);
+  }catch(e){notice(e.message,true);}
+  finally{mainBusy=false;await refreshWithVersion();}
+ };
+ input.click();
 }
 $('create-main-form').onsubmit=e=>{e.preventDefault();manageMain('create',$('main-month').value);};
 $('main-books').onclick=e=>{const button=e.target.closest('button[data-action]');if(button)manageMain(button.dataset.action,button.dataset.month);};

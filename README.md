@@ -71,9 +71,31 @@ replaces that date's full snapshot, without changing other dates. Repeating an a
 does not duplicate records. Ranges spanning two months update the matching monthly files.
 No leaves the main workbook unchanged; a skipped report can be added later from history.
 
-The app keeps the main workbook locally. Download its latest copy after adding reports.
-Changes made in a downloaded Excel copy are not imported into the app. Workbook changes
-are published only after validation; a failed update keeps the prior workbook available.
+### Save reviewed contributor edits (v1.4.5)
+
+For October and later months, download the latest Main workbook, change Team,
+Searcher, Typer or Final Error Contributor in Excel, and save the file. In the app,
+click **Save Excel edits** beside that month and select the saved `.xlsx`.
+The confirmation means the corrections are stored locally and included in future
+refreshes, daily additions and re-collections of that error. Different errors on
+the same order remain separate. TitleVision statuses, points and client comments
+continue updating from their verified source.
+
+The Main table contains a hidden error-ID column that moves with a full table
+sort. Keep every original row and column; filter rather than delete records.
+Source dates and order details cannot be changed through this import. A typed
+final contributor is retained for the selected team; changing Team selects the
+other team's contributor. All four PivotTables rebuild after a successful save.
+Older copies without error IDs require Refresh status and a fresh Main download
+before editing. A conflicting edit from an older copy is rejected instead of
+overwriting a newer correction; nonconflicting edits preserve newly added rows.
+
+Excel Save alone does not send changes to the app. Use Save Excel edits before
+relying on them in a future download, then download the latest Main workbook.
+Corrections and the new workbook publish together only after validation. A failed
+save leaves both the previous workbook and its saved corrections intact. Removing
+a monthly workbook retains corrections for recovery if those error IDs are approved
+again. Copies on another PC use that PC's own local application data.
 
 The **Application updates** panel shows the running version. **Get update** checks
 the latest stable GitHub release, verifies GitHub's SHA-256 digest, installs it and

@@ -1,3 +1,15 @@
+## Version 1.4.5
+
+- Add **Save Excel edits** for October and later Main workbooks. Upload a saved Main `.xlsx` to retain reviewed Team, Searcher, Typer and Final Error Contributor corrections locally.
+- Match corrections to the native TitleVision error ID, preserving separate errors on repeated orders and keeping corrections through next-day additions, status refreshes and date re-collections.
+- Continue automatically refreshing source statuses, points and investigation/client comments. A manually typed final contributor applies to its selected team; choosing another team follows that team's contributor.
+- Include a hidden error-ID column inside the Main table so sorting keeps identities with rows. Keep the original rows, columns, dates and order details. Validate workbook provenance and every imported correction.
+- Merge nonconflicting edits from older copies without deleting newer rows. Reject conflicting older corrections, missing/repeated IDs, row deletions and invalid contributor inputs.
+- Rebuild all four native PivotTables and publish corrections with the validated workbook atomically. Failed saves retain the previous workbook and corrections.
+- Preserve the October 1 activation date, daily approval choice, sign-in, reports and schedule.
+
+Update using Get update. For an existing October workbook, use Refresh status and download the latest Main Excel before editing. Save the file in Excel, then click Save Excel edits in the app and choose it. Excel Save by itself does not send changes back to the app. These controls activate with the October monthly workflow on October 1.
+
 ## Version 1.4.4
 
 - Include the investigation/client comment enhancement described below.

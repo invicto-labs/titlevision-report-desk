@@ -8,9 +8,14 @@ def build(folder):
  payload=json.loads((folder/'payload.json').read_text(encoding='utf8'))
  collection=json.loads((folder/'collection.json').read_text(encoding='utf8'))
  headers,*rows=payload['data'];widths=payload.get('widths') or json.loads((Path(__file__).resolve().parents[1]/'templates/layout.json').read_text(encoding='utf8'))['widths'];n=len(rows)
+ editable='editIds' in payload
+ if editable:
+  assert len(payload['editIds'])==n and len(set(payload['editIds']))==n
  title=collection['start'] if collection['start']==collection['end'] else collection['start']+' to '+collection['end']
  wb=xlsxwriter.Workbook(folder/'base.xlsx',{'strings_to_formulas':False,'strings_to_urls':False})
  summary=wb.add_worksheet('Summary');sheet=wb.add_worksheet('SP 2')
+ if editable:
+  meta=wb.add_worksheet('_ReportDesk');meta.write('A1','Month');meta.write('B1',payload['editMonth']);meta.write('A2','Revision');meta.write('B2',payload['editRevision']);meta.very_hidden()
  navy='#17365D';formats={}
  def fmt(**kw):
   props={'font_name':'Arial','font_size':10,'font_color':'#1F2937','text_wrap':True,'valign':'vcenter',**kw}
@@ -23,7 +28,8 @@ def build(folder):
  for j,width in enumerate(widths):sheet.set_column(j,j,width)
  sheet.freeze_panes(1,3);sheet.set_row(0,44)
  # Add the table before writing cells so cached formula values are preserved.
- sheet.add_table(0,0,max(n,1),27,{'name':payload['tableName'],'style':None,'columns':[{'header':h,'header_format':header} for h in headers]})
+ sheet.add_table(0,0,max(n,1),28 if editable else 27,{'name':payload['tableName'],'style':None,'columns':[{'header':h,'header_format':header} for h in [*headers,*(['TitleVision Error ID'] if editable else [])]]})
+ if editable:sheet.set_column(28,28,18,None,{'hidden':True})
  for i,row in enumerate(rows or [[None]*28],1):
   maxlines=1
   for j,value in enumerate(row):
@@ -37,11 +43,16 @@ def build(folder):
    if j==23:
     r=i+1
     formula=f'=IF(TRIM(W{r})="Triage","Triage",IF(TRIM(W{r})="VM team","VM team",IF(TRIM(W{r})="Search",IF(S{r}="","",S{r}),IF(OR(TRIM(W{r})="Type",TRIM(W{r})="Typing"),IF(U{r}="","",U{r}),""))))'
+    override=(payload.get('contributorOverrides') or [None]*n)[i-1] if n else None
+    if override:
+     team=override['team'].replace('"','""');name=override['name'].replace('"','""')
+     formula=f'=IF(TRIM(W{r})="{team}","{name}",{formula[1:]})'
     code=sheet.write_formula(i,j,formula,cellformat,value or '')
    else:code=sheet.write(i,j,value,cellformat)
    if code:raise ValueError('Excel cell write failed; report withheld')
    maxlines=max(maxlines,sum(max(1,math.ceil(len(part)/max(1,widths[j]*0.85))) for part in str(value or '').split('\n')))
   sheet.set_row(i,min(409,max(52,maxlines*14+12)))
+  if editable and i<=n:sheet.write_string(i,28,payload['editIds'][i-1])
  sheet.data_validation(1,22,max(n,1),22,{'validate':'list','source':['Search','Type','Triage','VM team'],'error_type':'stop','error_title':'Choose a team','error_message':'Select Search, Type, Triage or VM team.'})
  summary.set_default_row(25)
  for j,width in enumerate([25,14,15,4,23,14,15,4,23,14,15]):summary.set_column(j,j,width)

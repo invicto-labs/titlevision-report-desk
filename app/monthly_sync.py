@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse,parse_qs
 import calendar,hashlib,json,math,re,sys,uuid
 import main_workbook as main
+import manual_edits
 from reconcile import canonical
 from status_history import fields as status_fields
 
@@ -98,12 +99,14 @@ def overlay(entries,current):
   updated[14]=(datetime.fromisoformat(modified)-datetime(1899,12,30)).total_seconds()/86400 if modified else None
   rows.append(updated);audit.append({'sourceId':key,'order':row[1],'oldStatus':row[0],'status':updated[0],'oldPoints':row[13],'points':updated[13],'oldDecisionFields':row[24:28],'decisionFields':updated[24:28],'commentHistory':latest.get('statusHistory')})
  return rows,audit
-def prepare(root,data,run_process,month,days,rows,audit,through,checked):
+def prepare(root,data,run_process,month,days,rows,audit,through,checked,overrides=None):
  folder=data/'main'/month/uuid.uuid4().hex;folder.mkdir(parents=True)
  start,end=(days[0],days[-1]) if days else (month+'-01',month+'-01')
  points=sum(r[13] for r in rows)
  collection=dict(start=start,end=end,count=len(rows),points=points,mainMonth=month,syncThrough=through,syncedAt=checked)
- (folder/'payload.json').write_text(json.dumps(main.make_payload(root,rows)),encoding='utf8')
+ payload=main.make_payload(root,rows)
+ payload.update(editIds=[a['sourceId'] for a in audit],editMonth=month,editRevision=folder.name,contributorOverrides=overrides or [None]*len(rows))
+ (folder/'payload.json').write_text(json.dumps(payload),encoding='utf8')
  (folder/'collection.json').write_text(json.dumps(collection),encoding='utf8')
  (folder/'status-audit.json').write_text(json.dumps(audit),encoding='utf8')
  for script in ('build_portable.py','finish.py'):run_process([sys.executable,root/'report'/script,folder],folder)
@@ -126,7 +129,8 @@ def refresh(root,data,db,run_process,fetch,month):
   if exists:
    days=sorted(d for d in selected if d.startswith(month+'-'))
    rows,audit=overlay(records(root,data,db,month,selected),current)
-   book=prepare(root,data,run_process,month,days,rows,audit,end.isoformat(),checked)
+   rows,overrides=manual_edits.apply(rows,audit,manual_edits.load(db,month))
+   book=prepare(root,data,run_process,month,days,rows,audit,end.isoformat(),checked,overrides)
   with db() as c:
    if book:c.execute('INSERT OR REPLACE INTO main_books VALUES (?,?,?,?,?,?,?,?)',book)
    c.execute('INSERT OR REPLACE INTO main_snapshots VALUES (?,?,?,?)',(month,str(folder.relative_to(data)),end.isoformat(),checked))
@@ -173,8 +177,9 @@ def add(root,data,db,run_process,fetch,rid):
   snapshot=refresh(root,data,db,run_process,fetch,month)
   try:
    rows,audit=overlay(entries[month],snapshot['current'])
+   rows,overrides=manual_edits.apply(rows,audit,manual_edits.load(db,month))
    included=sorted(d for d in selected if d.startswith(month+'-'))
-   prepared.append(prepare(root,data,run_process,month,included,rows,audit,snapshot['through'],snapshot['checkedAt']))
+   prepared.append(prepare(root,data,run_process,month,included,rows,audit,snapshot['through'],snapshot['checkedAt'],overrides))
   except Exception as error:
    state(db,month,'failed',str(error)[:700]);raise
  # Approval and all new rows publish together, after every affected month passes.

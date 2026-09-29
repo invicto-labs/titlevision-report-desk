@@ -7,6 +7,7 @@ from xml.etree import ElementTree as ET
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import main_workbook as main
 import monthly_sync as sync
+import manual_edits
 from status_history import fields as status_fields
 ROOT=Path(__file__).resolve().parents[1]
 SITE_STATUSES=('New','Accepted','Auto-Accepted','Disputed','Non-Chargeable','Chargeable')
@@ -182,5 +183,88 @@ class MonthlySyncTests(unittest.TestCase):
   self.assertEqual(totals,{status:(1,value) for status,value in zip(SITE_STATUSES,points)})
   fixture=ROOT/'tests/results'/('report-phase2-'+uuid.uuid4().hex);fixture.mkdir();shutil.copy2(file,fixture/'report.xlsx')
   print('PHASE2_FIXTURE='+str(fixture/'report.xlsx'))
+
+ def edited_copy(self,change):
+  import openpyxl
+  from io import BytesIO
+  file,_=self.book();wb=openpyxl.load_workbook(file)
+  change(wb);out=BytesIO();wb.save(out);wb.close();return out.getvalue()
+
+ def test_manual_edits_survive_next_day_refresh_and_reapproval(self):
+  import openpyxl
+  first=[self.source(1,'2026-10-01'),self.source(2,'2026-10-01')]
+  self.live=copy.deepcopy(first);a=self.seed('2026-10-01','2026-10-01',first);self.add(a,self.real_build)
+  def change(wb):
+   sheet=wb['SP 2'];sheet['W2']='Type';sheet['U2']='Corrected Typer';sheet['X3']='Reviewed Contributor'
+   # Sorting must move the hidden native ID with its row.
+   values=[list(row) for row in sheet.values][1:]
+   for i,row in enumerate(reversed(values),2):
+    for j,value in enumerate(row,1):sheet.cell(i,j,value)
+  result=manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',self.edited_copy(change))
+  self.assertIn('Saved 3',result['message'])
+  next_day=self.source(3,'2026-10-02');self.live.append(next_day)
+  self.live[0]['values'][0]='Non-Chargeable';self.live[0]['values'][15]='1'
+  b=self.seed('2026-10-02','2026-10-02',[next_day]);self.add(b,self.real_build)
+  file,rows=self.book();self.assertEqual(len(rows),3)
+  self.assertEqual(rows[0][20:24],['Corrected Typer','','Type','Corrected Typer'])
+  self.assertEqual(rows[1][23],'Reviewed Contributor');self.assertEqual(rows[2][23],'Searcher')
+  self.assertEqual(rows[0][24:28],['Disputed','Our reply','Non-Chargeable','Client reply'])
+  # Recollect the edited error's dates: corrections follow the error ID.
+  self.add(self.seed('2026-10-01','2026-10-01',first),self.real_build)
+  file,rows=self.book();self.assertEqual(rows[1][23],'Reviewed Contributor')
+  wb=openpyxl.load_workbook(file);self.assertEqual(wb['SP 2'].tables['TitleVisionErrors'].ref,'A1:AC4')
+  self.assertTrue(wb['SP 2'].column_dimensions['AC'].hidden);self.assertEqual(len(wb['Summary']._pivots),4)
+  self.assertEqual(wb['Summary']._pivots[0].cache.recordCount,3)
+  self.assertIn('Reviewed Contributor',wb['SP 2']['X3'].value)
+  fixture=ROOT/'tests/results'/('report-edits-'+uuid.uuid4().hex);fixture.mkdir();shutil.copy2(file,fixture/'report.xlsx')
+  print('EDITS_FIXTURE='+str(fixture/'report.xlsx'))
+
+ def test_old_copy_does_not_overwrite_newer_correction_or_delete_new_rows(self):
+  s=self.source(1,'2026-10-01');self.live=[s];self.add(self.seed('2026-10-01','2026-10-01',[s]),self.real_build)
+  old=self.edited_copy(lambda wb:setattr(wb['SP 2']['S2'],'value','Old correction'))
+  new=self.edited_copy(lambda wb:setattr(wb['SP 2']['S2'],'value','New correction'))
+  manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',new)
+  before=self.book()[0]
+  with self.assertRaisesRegex(ValueError,'conflicts'):manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',old)
+  self.assertEqual(self.book()[0],before)
+  self.assertEqual(self.book()[1][0][18],'New correction')
+
+ def test_invalid_upload_and_build_failure_leave_saved_corrections_unchanged(self):
+  s=self.source(1,'2026-10-01');self.live=[s];self.add(self.seed('2026-10-01','2026-10-01',[s]),self.real_build)
+  cases=[lambda wb:setattr(wb['SP 2']['AC2'],'value','999'),lambda wb:setattr(wb['SP 2']['B2'],'value','Other order'),
+   lambda wb:setattr(wb['SP 2']['W2'],'value','Other team'),lambda wb:setattr(wb['SP 2']['S2'],'value','=1+1'),lambda wb:wb['SP 2'].delete_rows(2)]
+  before=self.book()[0]
+  for change in cases:
+   with self.subTest(change=change):
+    with self.assertRaises(ValueError):manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',self.edited_copy(change))
+    self.assertEqual(self.book()[0],before);self.assertEqual(manual_edits.load(self.db,'2026-10'),{})
+  upload=self.edited_copy(lambda wb:setattr(wb['SP 2']['S2'],'value','Correction'))
+  def fail(args,folder):raise ValueError('Build failed')
+  with self.assertRaisesRegex(ValueError,'Build failed'):manual_edits.save(ROOT,self.data,self.db,fail,'2026-10',upload)
+  self.assertEqual(self.book()[0],before);self.assertEqual(manual_edits.load(self.db,'2026-10'),{})
+
+ def test_unchanged_and_stale_unedited_copy_keeps_manual_changes(self):
+  s=self.source(1,'2026-10-01');self.live=[s];self.add(self.seed('2026-10-01','2026-10-01',[s]),self.real_build)
+  untouched=self.book()[0].read_bytes()
+  upload=self.edited_copy(lambda wb:setattr(wb['SP 2']['X2'],'value','Manual final'))
+  manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',upload)
+  # Opening an old workbook without edits cannot revert a saved correction.
+  result=manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',untouched)
+  self.assertIn('No new',result['message']);self.assertEqual(self.book()[1][0][23],'Manual final')
+  # A changed Team uses the other team's contributor instead of the old override.
+  upload=self.edited_copy(lambda wb:setattr(wb['SP 2']['W2'],'value','Type'))
+  manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',upload)
+  self.assertEqual(self.book()[1][0][23],'Typer')
+
+ def test_older_copy_can_save_nonconflicting_edits_without_dropping_next_day(self):
+  first=self.source(1,'2026-10-01');self.live=[first]
+  self.add(self.seed('2026-10-01','2026-10-01',[first]),self.real_build)
+  upload=self.edited_copy(lambda wb:setattr(wb['SP 2']['S2'],'value','Reviewed original'))
+  second=self.source(2,'2026-10-02');self.live.append(second)
+  self.add(self.seed('2026-10-02','2026-10-02',[second]),self.real_build)
+  manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',upload)
+  rows=self.book()[1];self.assertEqual(len(rows),2)
+  self.assertEqual([r[23] for r in rows],['Reviewed original','Searcher'])
+  self.assertEqual(self.book()[0].parent.joinpath('payload.json').exists(),True)
 
 if __name__=='__main__':unittest.main()

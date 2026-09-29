@@ -9,6 +9,8 @@ import json, math, re, sys, uuid
 
 
 def initialize(connection):
+    from manual_edits import initialize as initialize_edits
+    initialize_edits(connection)
     connection.execute('CREATE TABLE IF NOT EXISTS main_choices (run_id TEXT PRIMARY KEY, choice TEXT NOT NULL)')
     connection.execute('CREATE TABLE IF NOT EXISTS main_days (day TEXT PRIMARY KEY, run_id TEXT NOT NULL)')
     connection.execute('CREATE TABLE IF NOT EXISTS main_books (month TEXT PRIMARY KEY, folder TEXT NOT NULL, start TEXT, end TEXT, count INTEGER, points REAL, days INTEGER, updated TEXT)')

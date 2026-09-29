@@ -51,6 +51,18 @@ class ServerTests(unittest.TestCase):
    decide.assert_not_called()
   req=urllib.request.Request(path,b'{"add":"yes"}',headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN})
   with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
+ def test_excel_edits_require_csrf_and_pass_raw_workbook_under_worker_lock(self):
+  path=self.url+'/api/main/edits'
+  with patch.object(server.manual_edits,'save',return_value={'message':'Saved'}) as save:
+   req=urllib.request.Request(path,b'workbook',headers={'Origin':self.url,'X-Workbook-Month':'2026-10'})
+   with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
+   save.assert_not_called()
+   req=urllib.request.Request(path,b'workbook',headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN,'X-Workbook-Month':'2026-10'})
+   with urllib.request.urlopen(req) as response:self.assertEqual(json.load(response)['message'],'Saved')
+   self.assertEqual(save.call_args.args[-2:],('2026-10',b'workbook'))
+   with server.RunLock():
+    with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
+   self.assertEqual(save.call_count,1)
  def test_main_choice_is_recorded_and_main_download_has_stable_name(self):
   rid='c'*32
   with server.db() as c:c.execute('INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,'2026-01-01','2026-01-01','review','test','now',2,3,1,None))

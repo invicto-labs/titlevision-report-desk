@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from contextlib import contextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from updater import Updates
-import main_workbook,monthly_sync
+import main_workbook,monthly_sync,manual_edits
 ROOT=Path(__file__).resolve().parent
 PORTABLE=(ROOT/'portable.json').exists()
 DATA=Path(os.environ.get('TITLEVISION_DATA',Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'TitleVision Report Desk/data' if PORTABLE else ROOT/'data')).resolve();DATA.mkdir(parents=True,exist_ok=True)
@@ -257,8 +257,17 @@ class Handler(BaseHTTPRequestHandler):
  def do_POST(self):
   try:
    self.guard(True);length=int(self.headers.get('Content-Length','0'))
-   if length>8192:raise ValueError('Request too large')
-   obj=json.loads(self.rfile.read(length));p=urlparse(self.path).path
+   p=urlparse(self.path).path
+   if p=='/api/main/edits':
+    if length<=0 or length>12*1024*1024:raise ValueError('Choose an Excel workbook smaller than 12 MB.')
+    month=self.headers.get('X-Workbook-Month','')
+    content=self.rfile.read(length)
+    with RunLock():
+     if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
+     result=manual_edits.save(ROOT,DATA,db,run_process,month,content)
+    return self.send(200,result)
+   if length<=0 or length>8192:raise ValueError('Request too large')
+   obj=json.loads(self.rfile.read(length))
    if p.startswith('/api/runs/') and p.endswith('/main'):
     chunks=p.split('/')
     if len(chunks)!=5:raise ValueError('Invalid report URL')

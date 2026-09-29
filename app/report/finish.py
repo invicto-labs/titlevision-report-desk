@@ -11,6 +11,10 @@ collection=json.loads((base/'collection.json').read_text(encoding='utf8'))
 expected_points=collection['points']
 payload=json.loads((base/'payload.json').read_text(encoding='utf8'))
 headers,*rows=payload['data']
+if 'editIds' in payload:
+ assert len(payload['editIds'])==len(rows) and len(set(payload['editIds']))==len(rows)
+ headers=[*headers,'TitleVision Error ID']
+ rows=[[*row,key] for row,key in zip(rows,payload['editIds'])]
 S='http://schemas.openxmlformats.org/spreadsheetml/2006/main';R='http://schemas.openxmlformats.org/officeDocument/2006/relationships';P='http://schemas.openxmlformats.org/package/2006/relationships';C='http://schemas.openxmlformats.org/package/2006/content-types'
 q=lambda tag:'{'+S+'}'+tag
 def root(tag,attrs=None):return E.Element(q(tag),attrs or {},nsmap={None:S,'r':R})
@@ -92,6 +96,8 @@ for k,p in enumerate(payload['specs'],1):
  col=p['col'];start=p['row'];end=start+p['height']-1
  loc=pt.find(q('location'));loc.set('ref',f'{chr(65+col)}{start}:{chr(67+col)}{end}');loc.set('firstHeaderRow','1');loc.set('firstDataRow','2')
  pf=pt.find(q('pivotFields'))
+ while len(pf)<len(headers):sub(pf,'pivotField')
+ pf.set('count',str(len(headers)))
  for j,f in enumerate(pf):
   for c in list(f):f.remove(c)
   f.attrib.clear();f.set('showAll','0')
@@ -131,6 +137,8 @@ assert f['SP 2'].freeze_panes=='D2'
 assert len(f['SP 2'].data_validations.dataValidation)==1
 for i,r in enumerate(rows,2):
  team=r[22].strip();expected_contributor='Triage' if team=='Triage' else 'VM team' if team=='VM team' else r[18] if team=='Search' else r[20] if team in {'Type','Typing'} else ''
+ override=(payload.get('contributorOverrides') or [None]*len(rows))[i-2]
+ if override:expected_contributor=override['name']
  assert (r[23] or '')==(expected_contributor or ''),'Contributor does not follow Team'
  for j,val in enumerate(r,1):
   actual=v['SP 2'].cell(i,j).value
@@ -139,7 +147,7 @@ for i,r in enumerate(rows,2):
  assert f['SP 2'].cell(i,24).value.startswith('=IF(TRIM(W')
  for j in range(1,29):
   if j!=24:assert f['SP 2'].cell(i,j).data_type!='f','Unexpected formula in source data'
-assert len(records)==len(rows) and all(len(r)==28 for r in records)
+assert len(records)==len(rows) and all(len(r)==len(headers) for r in records)
 for p in payload['specs']:
  assert sum(1 for r in rows if (r[p['field']] or '') in p['items'])==len(rows)
  print(p['name'],p['height'],[(name,sum((r[p['field']] or '')==name for r in rows)) for name in p['items']])
