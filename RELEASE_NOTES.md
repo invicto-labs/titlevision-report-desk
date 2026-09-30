@@ -1,3 +1,11 @@
+## Version 1.4.6
+
+- Fix the packaged Python runtime failing at report reconciliation with `ModuleNotFoundError: No module named 'status_history'`. The module was included in the installer, but Python's isolated path did not include the report script's folder.
+- Resolve the local module from the script's own folder and add an isolated-runtime regression test to the release checks.
+- Preserve all collections, workbooks, credentials, schedules and the October Main workbook correction workflow.
+
+Update using Get update, then rerun any failed dates. A report collected before this error may also be recovered from its verified export.
+
 ## Version 1.4.5
 
 - Add **Save Excel edits** for October and later Main workbooks. Upload a saved Main `.xlsx` to retain reviewed Team, Searcher, Typer and Final Error Contributor corrections locally.

@@ -3,8 +3,16 @@ from pathlib import Path
 import json,sys,tempfile,unittest,openpyxl
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from reconcile import reconcile,HEADERS
+import subprocess
 
 class ReconcileTests(unittest.TestCase):
+ def test_script_imports_status_history_with_isolated_python_path(self):
+  # The packaged runtime uses python312._pth, which excludes the script folder.
+  with tempfile.TemporaryDirectory() as t:
+   p=Path(t);self.fixture(p)
+   result=subprocess.run([sys.executable,'-I',str(Path(__file__).resolve().parents[1]/'reconcile.py'),str(p)],capture_output=True,text=True,cwd=p)
+   self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+   self.assertEqual(json.loads((p/'reconciled.json').read_text())['count'],0)
  def fixture(self,folder,mutate=None):
   w=openpyxl.Workbook();w.active.title='SearchReport';w.active.append(['Results']);w.active.append(['No errors found'])
   c=w.create_sheet('SearchCriteria')

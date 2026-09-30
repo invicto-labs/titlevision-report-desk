@@ -3,6 +3,7 @@ from collections import Counter,defaultdict,deque
 from datetime import datetime,date,timedelta
 from pathlib import Path
 import json,sys,openpyxl,re,hashlib
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from status_history import fields as status_fields
 HEADERS=['Status','Order Number','Vendor','User','Team','Task','Error Category Type','Error Category Sub Type','Notes','Product','Reported By','Created By','Created Date','Region','State','Points','Last Updated Date','Error Committed Date','EPON','PriceType']
 def norm(v):
