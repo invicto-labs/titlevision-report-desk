@@ -80,7 +80,7 @@ def build(folder):
  notes=max(25,*(p['row']+p['height']+2 for p in payload['specs'] if p['col']>0))
  texts=[(0,'Double-click a PivotTable count or points total to open its full records.'),(2,'After changing Team, select Data → Refresh All to update the PivotTables.'),(4,'Team options: Search, Type, Triage, VM team.'),(6,'(blank) means no team or contributor is assigned. A blank Typer means no human typing task was recorded.'),(8,'Source: TitleVision All Errors, created '+title+'.')]
  if collection.get('mainMonth'):
-  texts[-1]=(8,'Only approved daily reports are included. Status and points checked through '+collection['syncThrough']+'.' if collection.get('syncThrough') else 'Empty monthly workbook. Add a verified daily report to begin.')
+  texts[-1]=(8,'Only verified collected days are included. Status and points checked through '+collection['syncThrough']+'.' if collection.get('syncThrough') else 'Empty monthly workbook. Run a verified daily report to begin.')
  for offset,text in texts:
   r=notes+offset-1;summary.merge_range(r,4,r,10,text,fmt(**border));summary.set_row(r,42 if offset==6 else 34)
  wb.close()

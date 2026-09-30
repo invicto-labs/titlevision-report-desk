@@ -43,7 +43,7 @@ class MonthlySyncTests(unittest.TestCase):
   return rid
  def fetch(self,start,end,folder):
   self.fetches.append((start,end))
-  source=copy.deepcopy(self.live)
+  source=[copy.deepcopy(record) for record in self.live if start<=datetime.strptime(record['values'][12],'%m/%d/%Y %I:%M:%S %p').date().isoformat()<=end]
   for record in source:
    status=record['values'][0]
    if status!='New' and 'statusHistory' not in record:
@@ -67,14 +67,37 @@ class MonthlySyncTests(unittest.TestCase):
   with self.db() as c:path=main.download(self.data,c,'2026-10')
   return path,json.loads((path.parent/'payload.json').read_text())['data'][1:]
  def test_strict_start_and_month_boundary(self):
-  with patch.object(sync,'today',return_value=date(2026,9,30)):
-   with self.assertRaisesRegex(ValueError,'1 October'):sync.create(ROOT,self.data,self.db,self.build,'2026-10')
-  for month in ['2026-09','2026-11','../../runs','2026-99']:
+  with patch.object(sync,'today',return_value=date(2026,8,31)):
+   with self.assertRaisesRegex(ValueError,'1 September'):sync.create(ROOT,self.data,self.db,self.build,'2026-10')
+  for month in ['2026-08','2026-11','../../runs','2026-99']:
    with self.assertRaises(ValueError):sync.create(ROOT,self.data,self.db,self.build,month)
   with patch.object(sync,'today',return_value=date(2026,10,1)):
    sync.create(ROOT,self.data,self.db,self.build,'2026-10')
    with self.assertRaisesRegex(ValueError,'No completed day'):sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
   self.assertEqual(self.fetches,[])
+ def test_september_refresh_and_friday_to_sunday_month_boundary(self):
+  september=self.source(11,'2026-09-30');october=self.source(12,'2026-10-01')
+  self.live=[september,october]
+  run=self.seed('2026-09-30','2026-10-01',[september,october])
+  sync.add(ROOT,self.data,self.db,self.build,self.fetch,run)
+  with self.db() as c:
+   books={b['month']:b for b in main.books(c)}
+  self.assertEqual(set(books),{'2026-09','2026-10'})
+  self.assertEqual((books['2026-09']['count'],books['2026-10']['count']),(1,1))
+  self.assertIn(('2026-09-01','2026-09-30'),self.fetches)
+  self.assertIn(('2026-10-01','2026-10-03'),self.fetches)
+ def test_earlier_dispute_is_found_and_refresh_changes_client_status(self):
+  old=self.source(1,'2026-09-20',status='Disputed');self.live=[copy.deepcopy(old)]
+  sync.add(ROOT,self.data,self.db,self.build,self.fetch,self.seed('2026-09-20','2026-09-20',[old]))
+  self.assertEqual(sync.disputed_months(self.data,self.db),['2026-09'])
+  with patch.object(sync,'today',return_value=date(2026,10,4)):
+   self.live[0]['values'][0]='Non-Chargeable'
+   sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-09')
+  with self.db() as c:file=main.download(self.data,c,'2026-09')
+  row=json.loads((file.parent/'payload.json').read_text())['data'][1]
+  self.assertEqual(row[0],'Non-Chargeable')
+  self.assertEqual(row[24:28],['Disputed','Our reply','Non-Chargeable','Client reply'])
+  self.assertEqual(sync.disputed_months(self.data,self.db),[])
  def test_exact_error_ids_preserve_repeated_orders_and_actual_nonchargeable_points(self):
   first=[self.source(1,'2026-10-01'),self.source(2,'2026-10-01')]
   second=[self.source(3,'2026-10-02'),self.source(4,'2026-10-02')]

@@ -1,3 +1,12 @@
+## Version 1.4.7
+
+- Add each verified manual or scheduled run to its Main monthly workbook automatically, replacing the full collected snapshot for an already covered date while keeping separate errors on repeated orders. Remove the Yes/No prompt.
+- Run at 08:45 India time on weekdays. Monday collects Friday, Saturday and Sunday as one inclusive range; Tuesday through Friday collect the previous day. Date ranges crossing two months update both monthly workbooks.
+- Check every day of each affected month through its latest completed date before publishing status, points and client comment changes. Recheck earlier published months that still contain disputed errors on future runs.
+- Enable the same verified monthly refresh and saved contributor corrections for September 2026, allowing September 1–10 to exercise the complete workflow. Earlier historical months keep their existing workbook behavior.
+- Retain a verified daily download if the monthly refresh fails, show the reason, and retry its pending Main-workbook addition on a later run. Keep the previous validated Main workbook available until a replacement passes all checks.
+- Preserve reports, saved sign-in, schedule and correction history during update. Existing downloaded Excel copies do not change automatically; download the latest Main workbook.
+
 ## Version 1.4.6
 
 - Fix the packaged Python runtime failing at report reconciliation with `ModuleNotFoundError: No module named 'status_history'`. The module was included in the installer, but Python's isolated path did not include the report script's folder.

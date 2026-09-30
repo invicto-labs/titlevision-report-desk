@@ -105,12 +105,27 @@ class ServerTests(unittest.TestCase):
    @classmethod
    def now(cls,tz=None):return cls(2026,9,21,8,45,tzinfo=server.IST)
   with patch.object(server,'datetime',Clock),patch.object(server,'launch_run') as launch:
-   server.scheduled();launch.assert_called_once_with('2026-09-20','2026-09-20','2026-09-21',False)
+   server.scheduled();launch.assert_called_once_with('2026-09-18','2026-09-20','2026-09-21',False)
   class Early(Clock):
    @classmethod
    def now(cls,tz=None):return cls(2026,9,21,8,44,tzinfo=server.IST)
   with patch.object(server,'datetime',Early),patch.object(server,'launch_run') as launch:
    server.scheduled();launch.assert_not_called()
+  class Tuesday(Clock):
+   @classmethod
+   def now(cls,tz=None):return cls(2026,9,22,8,45,tzinfo=server.IST)
+  with patch.object(server,'datetime',Tuesday),patch.object(server,'launch_run') as launch:
+   server.scheduled();launch.assert_called_once_with('2026-09-21','2026-09-21','2026-09-22',False)
+  class Saturday(Clock):
+   @classmethod
+   def now(cls,tz=None):return cls(2026,9,19,8,45,tzinfo=server.IST)
+  with patch.object(server,'datetime',Saturday),patch.object(server,'launch_run') as launch:
+   server.scheduled();launch.assert_not_called()
+  class MonthBoundary(Clock):
+   @classmethod
+   def now(cls,tz=None):return cls(2026,11,2,8,45,tzinfo=server.IST)
+  with patch.object(server,'datetime',MonthBoundary),patch.object(server,'launch_run') as launch:
+   server.scheduled();launch.assert_called_once_with('2026-10-30','2026-11-01','2026-11-02',False)
   server.save_setting('schedule',False)
  def test_schedule_requires_verified_live_report(self):
   with patch.object(server.subprocess,'run') as command:
@@ -143,12 +158,12 @@ class ServerTests(unittest.TestCase):
    server.install_schedule(False)
    self.assertEqual((folder/'script-ran.txt').read_text(),'ran')
    self.assertEqual(os.environ['PSExecutionPolicyPreference'],'Restricted')
- def test_phase2_api_stays_off_before_october_and_requires_delete_confirmation(self):
+ def test_phase2_api_stays_off_before_september_and_requires_delete_confirmation(self):
   from datetime import date
-  with patch.object(server.monthly_sync,'today',return_value=date(2026,9,30)):
+  with patch.object(server.monthly_sync,'today',return_value=date(2026,8,31)):
    req=urllib.request.Request(self.url+'/api/main/create',json.dumps({'month':'2026-10'}).encode(),headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN})
    with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(req)
-   self.assertIn('1 October',error.exception.read().decode())
+   self.assertIn('1 September',error.exception.read().decode())
   with patch.object(server.monthly_sync,'delete') as delete:
    req=urllib.request.Request(self.url+'/api/main/delete',json.dumps({'month':'2026-10'}).encode(),headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN})
    with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
@@ -160,17 +175,57 @@ class ServerTests(unittest.TestCase):
   def process(args,directory,*a,**kw):
    (directory/'issues.json').write_text('[]')
    (directory/'validation.json').write_text(json.dumps({'passed':True,'count':1,'points':3}))
-  def refresh(*args):
+  def add(*args):
    self.assertTrue((folder/'validation.json').exists())
-   self.assertEqual(args[-1],'2026-10')
+   self.assertEqual(args[-1],rid)
    raise ValueError('Simulated month export failure')
   lock=MagicMock()
   try:
-   with patch.object(server.monthly_sync,'today',return_value=date(2026,10,2)),patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.monthly_sync,'refresh',side_effect=refresh) as sync:
+   with server.db() as c:c.execute('INSERT INTO main_auto_pending VALUES (?,?)',(rid,'now'))
+   with patch.object(server.monthly_sync,'today',return_value=date(2026,10,2)),patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.monthly_sync,'add',side_effect=add) as sync,patch.object(server.monthly_sync,'disputed_months',return_value=[]):
     server.perform(rid,lock);sync.assert_called_once()
    with server.db() as c:run=c.execute('SELECT * FROM runs WHERE id=?',(rid,)).fetchone()
    self.assertEqual(run['status'],'review');self.assertEqual(run['count'],1);self.assertEqual(run['points'],3)
    self.assertEqual(json.loads((folder/'issues.json').read_text())[0]['kind'],'month_refresh');lock.__exit__.assert_called_once()
+   with server.db() as c:self.assertIsNotNone(c.execute('SELECT 1 FROM main_auto_pending WHERE run_id=?',(rid,)).fetchone())
   finally:
-   with server.db() as c:c.execute('DELETE FROM runs WHERE id=?',(rid,))
+   with server.db() as c:c.execute('DELETE FROM runs WHERE id=?',(rid,));c.execute('DELETE FROM main_auto_pending WHERE run_id=?',(rid,))
+ def test_verified_run_auto_adds_and_refreshes_earlier_disputes(self):
+  rid=uuid.uuid4().hex;folder=server.DATA/'runs'/rid
+  with server.db() as c:
+   c.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,'2026-10-02','2026-10-04','queued','test','now',None,None,0,None))
+   c.execute('INSERT INTO main_auto_pending VALUES (?,?)',(rid,'now'))
+  def process(args,directory,*a,**kw):
+   (directory/'issues.json').write_text('[]')
+   (directory/'validation.json').write_text(json.dumps({'passed':True,'count':2,'points':4}))
+  lock=MagicMock()
+  try:
+   with patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.monthly_sync,'add',return_value={'choice':'yes'}) as add,patch.object(server.monthly_sync,'disputed_months',return_value=['2026-09']),patch.object(server.monthly_sync,'refresh',return_value={}) as refresh:
+    server.perform(rid,lock)
+   self.assertEqual(add.call_args.args[-1],rid)
+   self.assertEqual(refresh.call_args.args[-1],'2026-09')
+   with server.db() as c:
+    self.assertEqual(c.execute('SELECT status FROM runs WHERE id=?',(rid,)).fetchone()[0],'complete')
+    self.assertIsNone(c.execute('SELECT 1 FROM main_auto_pending WHERE run_id=?',(rid,)).fetchone())
+  finally:
+   with server.db() as c:c.execute('DELETE FROM runs WHERE id=?',(rid,));c.execute('DELETE FROM main_auto_pending WHERE run_id=?',(rid,))
+ def test_failed_month_addition_is_retried_before_next_verified_run(self):
+  old=uuid.uuid4().hex;new=uuid.uuid4().hex;folder=server.DATA/'runs'/new
+  with server.db() as c:
+   c.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(old,'2026-09-28','2026-09-28','review','Main update pending','earlier',1,3,1,None))
+   c.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(new,'2026-09-29','2026-09-29','queued','test','later',None,None,0,None))
+   c.execute('INSERT INTO main_auto_pending VALUES (?,?)',(old,'earlier'))
+   c.execute('INSERT INTO main_auto_pending VALUES (?,?)',(new,'later'))
+  def process(args,directory,*a,**kw):
+   (directory/'issues.json').write_text('[]')
+   (directory/'validation.json').write_text(json.dumps({'passed':True,'count':1,'points':3}))
+  try:
+   with patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.monthly_sync,'add',return_value={'choice':'yes'}) as add,patch.object(server.monthly_sync,'disputed_months',return_value=[]):
+    server.perform(new,MagicMock())
+   self.assertEqual([x.args[-1] for x in add.call_args_list],[old,new])
+   with server.db() as c:self.assertEqual(c.execute('SELECT count(*) FROM main_auto_pending WHERE run_id IN (?,?)',(old,new)).fetchone()[0],0)
+  finally:
+   with server.db() as c:
+    c.execute('DELETE FROM runs WHERE id IN (?,?)',(old,new))
+    c.execute('DELETE FROM main_auto_pending WHERE run_id IN (?,?)',(old,new))
 if __name__=='__main__':unittest.main()

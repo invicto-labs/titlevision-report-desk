@@ -43,6 +43,7 @@ def initialize():
   c.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY,start TEXT,end TEXT,status TEXT,message TEXT,created TEXT,count INTEGER,points REAL,issues INTEGER,scheduled_day TEXT)')
   c.execute('CREATE UNIQUE INDEX IF NOT EXISTS scheduled_once ON runs(scheduled_day) WHERE scheduled_day IS NOT NULL')
   main_workbook.initialize(c)
+  c.execute('CREATE TABLE IF NOT EXISTS main_auto_pending (run_id TEXT PRIMARY KEY, created TEXT NOT NULL)')
 def setting(k,default=None):
  with db() as c:r=c.execute('SELECT value FROM settings WHERE key=?',(k,)).fetchone()
  return json.loads(r[0]) if r else default
@@ -127,20 +128,49 @@ def perform(rid,lock):
   run_process([sys.executable,ROOT/'report/finish.py',directory],directory)
   checks=json.loads((directory/'validation.json').read_text(encoding='utf8'));issues=json.loads((directory/'issues.json').read_text(encoding='utf8'))
   if not checks.get('passed'):raise ValueError('Workbook validation failed; report withheld.')
+  # A verified daily download stays available even if the monthly source changes
+  # or the site fails during the second, month-to-date export.
+  update(rid,status='review',message='Updating the Main workbook',count=checks['count'],points=checks['points'],issues=len(issues))
+  affected={day[:7] for day in main_workbook.days_between(run['start'],run['end'])}
+  checked_months=set(affected)
+  with db() as c:pending=[r['run_id'] for r in c.execute('SELECT run_id FROM main_auto_pending ORDER BY created,run_id')]
+  for pending_id in pending:
+   with db() as c:old=c.execute('SELECT * FROM runs WHERE id=?',(pending_id,)).fetchone()
+   if not old or old['status'] not in ('complete','review'):continue
+   checked_months.update(day[:7] for day in main_workbook.days_between(old['start'],old['end']))
+   try:
+    if monthly_sync.active() and old['start']>=monthly_sync.START.isoformat():
+     monthly_sync.add(ROOT,DATA,db,run_process,fetch_month,pending_id)
+    else:main_workbook.decide(ROOT,DATA,db,run_process,pending_id,True)
+    with db() as c:c.execute('DELETE FROM main_auto_pending WHERE run_id=?',(pending_id,))
+    if pending_id!=rid:
+     try:
+      old_issues_file=DATA/'runs'/pending_id/'issues.json'
+      if old_issues_file.is_file():
+       old_issues=json.loads(old_issues_file.read_text(encoding='utf8'))
+       remaining=[issue for issue in old_issues if issue.get('id')!='auto-main-'+pending_id]
+       if len(remaining)!=len(old_issues):
+        temp=old_issues_file.with_suffix('.tmp');temp.write_text(json.dumps(remaining),encoding='utf8');temp.replace(old_issues_file)
+        update(pending_id,status='review' if remaining else 'complete',message=f'{len(remaining)} item(s) need review' if remaining else 'Main workbook updated',issues=len(remaining))
+     except (OSError,ValueError,sqlite3.Error):pass
+   except Exception as error:
+    issues.append({'id':'auto-main-'+pending_id,'order':old['start']+' to '+old['end'],'kind':'month_refresh','message':'Daily report is available; Main workbook update is pending and will retry on the next run. '+str(error)[:500]})
   if monthly_sync.active():
-   months=sorted({day[:7] for day in main_workbook.days_between(run['start'],run['end']) if monthly_sync.eligible(day[:7])})
-   for month in months:
-    try:
-     monthly_sync.refresh(ROOT,DATA,db,run_process,lambda a,b,folder:fetch_month(a,b,folder,rid),month)
-    except Exception as e:
-     issues.append({'id':'month-'+month,'order':month+' main workbook','kind':'month_refresh','message':'Daily report is available. Monthly refresh failed; previous main workbook retained. '+str(e)[:500]})
-   (directory/'issues.json').write_text(json.dumps(issues),encoding='utf8')
+   try:older=monthly_sync.disputed_months(DATA,db,checked_months)
+   except Exception as error:
+    older=[];issues.append({'id':'dispute-list','order':'Earlier Main workbooks','kind':'month_refresh','message':'Could not identify unresolved disputes. '+str(error)[:500]})
+   for month in older:
+    try:monthly_sync.refresh(ROOT,DATA,db,run_process,lambda a,b,folder:fetch_month(a,b,folder,rid),month)
+    except Exception as error:
+     issues.append({'id':'month-'+month,'order':month+' Main workbook','kind':'month_refresh','message':'Earlier disputed errors could not be refreshed; previous workbook retained. '+str(error)[:500]})
+  (directory/'issues.json').write_text(json.dumps(issues),encoding='utf8')
   update(rid,status='review' if issues else 'complete',message=f'{len(issues)} item(s) need review' if issues else 'All report checks passed',count=checks['count'],points=checks['points'],issues=len(issues))
  except Exception as e:
   message=str(e)[:900]
   try:message=message.replace(credentials()['password'],'[redacted]')
   except Exception:pass
   update(rid,status='failed',message=message)
+  with db() as c:c.execute('DELETE FROM main_auto_pending WHERE run_id=?',(rid,))
  finally:lock.__exit__(None,None,None)
 
 def fetch_month(start,end,folder,rid=None):
@@ -155,7 +185,9 @@ def launch_run(start,end,scheduled_day=None,background=True):
   # Any running record left while the process lock is free was interrupted.
   with db() as c:
    c.execute("UPDATE runs SET status='failed',message='Application stopped during this run. Run the date again.' WHERE status IN ('running','queued')")
-   rid=uuid.uuid4().hex;c.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,start,end,'queued','Waiting to start',datetime.now(IST).isoformat(),None,None,0,scheduled_day))
+   c.execute("DELETE FROM main_auto_pending WHERE run_id IN (SELECT id FROM runs WHERE status='failed')")
+   rid=uuid.uuid4().hex;created=datetime.now(IST).isoformat();c.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,start,end,'queued','Waiting to start',created,None,None,0,scheduled_day))
+   c.execute('INSERT INTO main_auto_pending VALUES (?,?)',(rid,created))
  except Exception:lock.__exit__(None,None,None);raise
  if background:threading.Thread(target=perform,args=(rid,lock),daemon=True).start()
  else:perform(rid,lock)
@@ -164,14 +196,16 @@ def scheduled(background=False):
  if not setting('schedule',False):return
  now=datetime.now(IST)
  if (now.hour,now.minute)<(8,45):return
+ if now.weekday()>=5:return
  day=now.date().isoformat()
  yesterday=(now.date()-timedelta(days=1)).isoformat()
+ first=(now.date()-timedelta(days=3)).isoformat() if now.weekday()==0 else yesterday
  with db() as c:
   if c.execute('SELECT 1 FROM runs WHERE scheduled_day=?',(day,)).fetchone():return
-  done=c.execute("SELECT id FROM runs WHERE start=? AND end=? AND status IN ('complete','review') AND scheduled_day IS NULL ORDER BY created DESC LIMIT 1",(yesterday,yesterday)).fetchone()
+  done=c.execute("SELECT runs.id FROM runs JOIN main_choices ON main_choices.run_id=runs.id AND main_choices.choice='yes' WHERE runs.start=? AND runs.end=? AND runs.status IN ('complete','review') AND runs.scheduled_day IS NULL ORDER BY runs.created DESC LIMIT 1",(first,yesterday)).fetchone()
   if done:
    c.execute('UPDATE runs SET scheduled_day=? WHERE id=?',(day,done['id']));return
- try:launch_run(yesterday,yesterday,day,background)
+ try:launch_run(first,yesterday,day,background)
  except (ValueError,sqlite3.IntegrityError):return
 def schedule_loop():
  while True:
@@ -198,7 +232,7 @@ def public_state():
   verified=bool(c.execute("SELECT 1 FROM runs WHERE status IN ('complete','review') LIMIT 1").fetchone())
   main_books=main_workbook.books(c)
  with db() as c:syncs=[dict(r) for r in c.execute('SELECT * FROM main_sync_state ORDER BY month DESC')]
- return {'runs':runs,'mainBooks':main_books,'mainSyncs':syncs,'phase2':{'enabled':monthly_sync.active(),'starts':'2026-10-01','currentMonth':monthly_sync.today().strftime('%Y-%m')},'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
+ return {'runs':runs,'mainBooks':main_books,'mainSyncs':syncs,'phase2':{'enabled':monthly_sync.active(),'starts':monthly_sync.START.isoformat(),'currentMonth':monthly_sync.today().strftime('%Y-%m')},'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
 def downloadable_report(folder):
  def ready(directory):
   try:
@@ -274,8 +308,8 @@ class Handler(BaseHTTPRequestHandler):
     with RunLock():
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
      if type(obj.get('add')) is not bool:raise ValueError('Invalid main workbook choice')
-     with db() as c:r=c.execute('SELECT end FROM runs WHERE id=?',(chunks[3],)).fetchone()
-     if obj['add'] and monthly_sync.active() and r and r['end']>='2026-10-01':
+     with db() as c:r=c.execute('SELECT start,end FROM runs WHERE id=?',(chunks[3],)).fetchone()
+     if obj['add'] and monthly_sync.active() and r and r['start']>=monthly_sync.START.isoformat():
       result=monthly_sync.add(ROOT,DATA,db,run_process,fetch_month,chunks[3])
      else:result=main_workbook.decide(ROOT,DATA,db,run_process,chunks[3],obj['add'])
     return self.send(200,result)

@@ -1,6 +1,6 @@
 # TitleVision Report Desk
 
-Windows application for collecting and validating the previous day's TitleVision
+Windows application for collecting and validating TitleVision's latest completed workdays'
 error report. It includes contributor history lookup, editable Search/Type/Triage/
 VM team attribution, bordered Excel reports and native PivotTables. Routine runs
 make no AI calls. Windows must remain awake, online and signed in for scheduled runs.
@@ -10,32 +10,38 @@ make no AI calls. Windows must remain awake, online and signed in for scheduled 
 Download `TitleVision-Report-Desk-Setup.exe` from this repository's latest release.
 Requires Windows 10/11 x64 and Microsoft Edge. Python/Node and report libraries are
 included. Save the TitleVision login and verify a report before enabling 08:45 AM
-India-time collection. Each scheduled run collects the previous calendar day.
+India-time collection on weekdays. Monday collects Friday through Sunday; Tuesday
+through Friday collect the previous calendar day. Manual runs accept a completed
+date range of up to 31 days.
 
 ## Main monthly workbook
 
-### Phase 2 from October 2026
+### Automatic monthly workbooks from September 2026
 
-Version 1.4.0 enables workbook creation, removal and month-to-date status refresh
-on 1 October 2026 in India time, for October and later months. September remains
-on the existing workflow. The daily schedule still collects the previous calendar
-day, so October 1 itself collects September 30.
+Version 1.4.7 also enables the full monthly refresh for September 2026, so manual
+September 1–10 test runs can use the same workflow. Every verified manual or
+scheduled run is added automatically. New data for a previously collected date
+replaces that date's snapshot, while separate errors on repeated orders remain.
+An inclusive range crossing a month boundary updates each matching workbook.
 
 After daily collection, the app downloads all errors created from the month's
 first day through the latest completed day and reconciles the export against the
-site. Existing approved rows receive their latest status, points and Last Updated
+site. Existing rows receive their latest status, points and Last Updated
 Date, plus the investigation/client decision and comment columns, matched by the native TitleVision error ID and checked against order/date.
 Repeated order numbers and different errors on the same date stay separate.
 Non-chargeable points are copied exactly from the source. Unknown or missing
 identities stop monthly publication; the previous workbook remains downloadable.
 
-The Yes/No choice still controls new daily rows. Choosing Yes rechecks the month
-before adding the selected dates and rebuilding all PivotTables. A separate
-Refresh status button refreshes already-approved rows. Create monthly workbook
-starts an empty month; Delete workbook removes its published entry and approvals,
-retains daily reports and internal revisions, and allows reapproval to rebuild it.
+Every run rechecks the affected month before adding its dates and rebuilding all
+PivotTables. Earlier published months containing disputed errors are also rechecked
+on future runs, including across a month boundary. The separate Refresh status
+button still permits a manual check. Create monthly workbook starts an empty
+month; Delete workbook removes its published entry and included dates while
+retaining daily reports and internal revisions for recovery.
 Successful revisions publish atomically after validation. Download the latest
 main Excel from the app; already-downloaded copies do not update themselves.
+If a monthly update fails, its verified daily report remains downloadable and
+the pending Main-workbook addition is retried after a later run.
 
 ### Investigation and client replies (v1.4.3)
 
@@ -55,25 +61,23 @@ The four existing columns are populated without changing the workbook layout:
 For example, our dispute followed by brucec's “Training, reason accepted” response
 on a Non-Chargeable error produces Disputed / our comment / Non-Chargeable / that
 reply. Status is copied from TitleVision, not inferred from comment wording.
-October month-to-date refresh also updates these four columns, even when only the
+Month-to-date refresh also updates these four columns, even when only the
 comment changed. A missing/conflicting history stops publication and retains the
 previous workbook. Older daily downloads stay as saved; recollect their dates to
 obtain comments. Download the latest monthly workbook after a refresh.
 
-After a report completes, choose **Yes, add to main workbook** or **No, keep separate**.
-Only approved reports enter the monthly workbook. Scheduled runs also wait for a choice.
-The **Main monthly workbook** panel has one download per month; all approved records
+After a verified report completes, its dates are added without a choice.
+The **Main monthly workbook** panel has one download per month; all collected records
 continue in the same detail sheet, with the existing summary PivotTables and formulas.
 
 Every error row is preserved, even when an order number repeats on the same day or
-on different days. Adding a newer collection for an already-approved Created Date
-replaces that date's full snapshot, without changing other dates. Repeating an approval
+on different days. Adding a newer collection for an already-collected Created Date
+replaces that date's full snapshot, without changing other dates. Repeating a run
 does not duplicate records. Ranges spanning two months update the matching monthly files.
-No leaves the main workbook unchanged; a skipped report can be added later from history.
 
 ### Save reviewed contributor edits (v1.4.5)
 
-For October and later months, download the latest Main workbook, change Team,
+For September 2026 and later months, download the latest Main workbook, change Team,
 Searcher, Typer or Final Error Contributor in Excel, and save the file. In the app,
 click **Save Excel edits** beside that month and select the saved `.xlsx`.
 The confirmation means the corrections are stored locally and included in future
@@ -94,7 +98,7 @@ Excel Save alone does not send changes to the app. Use Save Excel edits before
 relying on them in a future download, then download the latest Main workbook.
 Corrections and the new workbook publish together only after validation. A failed
 save leaves both the previous workbook and its saved corrections intact. Removing
-a monthly workbook retains corrections for recovery if those error IDs are approved
+a monthly workbook retains corrections for recovery if those error IDs are collected
 again. Copies on another PC use that PC's own local application data.
 
 The **Application updates** panel shows the running version. **Get update** checks
@@ -158,4 +162,4 @@ components retain their own licenses. The Windows installer is currently unsigne
 
 ### Error statuses
 
-Every run reads and selects all statuses offered by TitleVision. The current set is New, Accepted, Auto-Accepted, Disputed, Non-Chargeable and Chargeable. Reports and monthly refreshes preserve the exact source status and actual points; PivotTables group all statuses present in the approved records. Future site statuses are included automatically.
+Every run reads and selects all statuses offered by TitleVision. The current set is New, Accepted, Auto-Accepted, Disputed, Non-Chargeable and Chargeable. Reports and monthly refreshes preserve the exact source status and actual points; PivotTables group all statuses present in the included records. Future site statuses are included automatically.

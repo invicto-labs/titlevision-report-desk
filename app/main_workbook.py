@@ -136,7 +136,7 @@ def decide(root, data, db, run_process, rid, add):
         connection.executemany('INSERT OR REPLACE INTO main_days VALUES (?,?)',[(day,rid) for day in chosen_days])
         connection.execute('INSERT OR REPLACE INTO main_choices VALUES (?,?)',(rid,'yes'))
         result = books(connection)
-    return {'choice':'yes','books':result,'message':'Added to the main workbook. Previously added dates in this range were replaced, keeping every error row.'}
+    return {'choice':'yes','books':result,'message':'Verified dates added to the Main workbook. Previously collected dates in this range were replaced, keeping every error row.'}
 
 
 def download(data, connection, month):

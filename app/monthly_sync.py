@@ -1,4 +1,4 @@
-"""October 2026 monthly lifecycle and verified status/points refresh.
+"""Verified monthly lifecycle and status/points refresh from September 2026.
 
 All callers hold the application's worker lock. Publish immutable workbook
 revisions only after source reconciliation, exact error matching and pivot checks.
@@ -12,16 +12,16 @@ import manual_edits
 from reconcile import canonical
 from status_history import fields as status_fields
 
-START=date(2026,10,1)
+START=date(2026,9,1)
 IST=timezone(timedelta(hours=5,minutes=30))
 def today():return datetime.now(IST).date()
 def active():return today()>=START
 def eligible(month):return bool(re.fullmatch(r'\d{4}-\d{2}',month)) and month>=START.strftime('%Y-%m')
 def guard(month):
- if not active():raise ValueError('Monthly status refresh and workbook management start on 1 October 2026.')
+ if not active():raise ValueError('Monthly status refresh and workbook management start on 1 September 2026.')
  try:first=date.fromisoformat(month+'-01')
  except (ValueError,TypeError):raise ValueError('Invalid workbook month')
- if not eligible(month) or first>today().replace(day=1):raise ValueError('Choose October 2026 or a later month that has started.')
+ if not eligible(month) or first>today().replace(day=1):raise ValueError('Choose September 2026 or a later month that has started.')
  return first
 def stamp():return datetime.now(timezone.utc).isoformat()
 def state(db,month,status,message):
@@ -70,7 +70,7 @@ def records(root,data,db,month,selected):
  for day in sorted(d for d in selected if d.startswith(month+'-')):
   rid=selected[day]
   if rid not in cache:
-   if rid not in runs:raise ValueError('An approved daily report is missing')
+   if rid not in runs:raise ValueError('A collected daily report is missing')
    main.load_report(root,data,runs[rid])
    folder=data/'runs'/rid
    source=json.loads((folder/'source.json').read_text(encoding='utf8'))
@@ -82,14 +82,14 @@ def records(root,data,db,month,selected):
    if source['values'][1]!=row[1]:raise ValueError('Daily error identity is attached to another order')
    if canonical(source['values'])[12][:10]!=day:raise ValueError('Daily error identity has a different Created Date')
    key=source_id(source)
-   if key in seen:raise ValueError('Duplicate error ID in approved daily reports')
+   if key in seen:raise ValueError('Duplicate error ID in included daily reports')
    seen.add(key);result.append((source,row))
  return result
 def overlay(entries,current):
  rows=[];audit=[]
  for original,row in entries:
   key=source_id(original);latest=current.get(key)
-  if latest is None:raise ValueError(f"{row[1]}: approved error {key} is missing from the month-to-date export. Previous workbook retained.")
+  if latest is None:raise ValueError(f"{row[1]}: included error {key} is missing from the month-to-date export. Previous workbook retained.")
   if order_key(original)!=order_key(latest):raise ValueError('A source error ID changed its order or Created Date; review required')
   values=latest['values'];updated=list(row)
   updated[0]=values[0];updated[13]=float(values[15])
@@ -116,6 +116,17 @@ def prepare(root,data,run_process,month,days,rows,audit,through,checked,override
  return (month,str(folder.relative_to(data)),start,end,len(rows),points,len(days),stamp())
 def selected_days(db):
  with db() as c:return dict(c.execute('SELECT day,run_id FROM main_days').fetchall())
+def disputed_months(data,db,exclude=()):
+ """Revisit published earlier months that still contain unresolved disputes."""
+ with db() as c:found=[dict(r) for r in c.execute('SELECT month,folder FROM main_books ORDER BY month')]
+ result=[]
+ for book in found:
+  month=book['month']
+  if not eligible(month) or month in exclude:continue
+  folder=safe_folder(data,book['folder'],'main')
+  payload=json.loads((folder/'payload.json').read_text(encoding='utf8'))
+  if any(row[0]=='Disputed' for row in payload['data'][1:]):result.append(month)
+ return result
 def refresh(root,data,db,run_process,fetch,month):
  first=guard(month);end=min(today()-timedelta(days=1),first.replace(day=calendar.monthrange(first.year,first.month)[1]))
  if end<first:raise ValueError('No completed day is available in this month yet.')
@@ -146,19 +157,19 @@ def create(root,data,db,run_process,month):
  with db() as c:
   c.execute('INSERT INTO main_books VALUES (?,?,?,?,?,?,?,?)',book)
   c.execute('DELETE FROM main_snapshots WHERE month=?',(month,))
-  c.execute('INSERT OR REPLACE INTO main_sync_state VALUES (?,?,?,?)',(month,'empty','Empty workbook. Add a verified daily report to start.',stamp()))
-  return {'books':main.books(c),'message':'Monthly workbook created. Add daily reports using Yes.'}
+  c.execute('INSERT OR REPLACE INTO main_sync_state VALUES (?,?,?,?)',(month,'empty','Empty workbook. Run a verified report to start.',stamp()))
+  return {'books':main.books(c),'message':'Monthly workbook created. Verified runs will add their dates automatically.'}
 def delete(data,db,month):
  guard(month)
  with db() as c:
   if not c.execute('SELECT 1 FROM main_books WHERE month=?',(month,)).fetchone():raise ValueError('Monthly workbook not found')
-  # Remove the published workbook and approval mapping, retaining daily sources
+  # Remove the published workbook and included-date mapping, retaining daily sources
   # and immutable revisions for recovery. No user report files are deleted.
   ids=[r[0] for r in c.execute('SELECT DISTINCT run_id FROM main_days WHERE day LIKE ?',(month+'-%',))]
   c.execute('DELETE FROM main_books WHERE month=?',(month,));c.execute('DELETE FROM main_days WHERE day LIKE ?',(month+'-%',))
   c.executemany('DELETE FROM main_choices WHERE run_id=?',[(rid,) for rid in ids])
   c.execute('DELETE FROM main_snapshots WHERE month=?',(month,));c.execute('DELETE FROM main_sync_state WHERE month=?',(month,))
-  return {'books':main.books(c),'message':'Monthly workbook removed. Daily reports remain available to rebuild it.'}
+  return {'books':main.books(c),'message':'Monthly workbook removed. Daily reports remain available; a future verified run will rebuild it.'}
 def add(root,data,db,run_process,fetch,rid):
  if not re.fullmatch(r'[0-9a-f]{32}',rid):raise ValueError('Invalid report')
  with db() as c:
@@ -166,7 +177,7 @@ def add(root,data,db,run_process,fetch,rid):
   if not found:raise ValueError('Report not found')
   run=dict(found)
  days=main.days_between(run['start'],run['end']);months=sorted({d[:7] for d in days})
- if any(not eligible(m) for m in months):raise ValueError('For Phase 2, collect October onward separately from September reports.')
+ if any(not eligible(m) for m in months):raise ValueError('Collect September 2026 onward separately from older reports.')
  for month in months:guard(month)
  main.load_report(root,data,run)
  selected=selected_days(db);selected.update({day:rid for day in days})
@@ -182,9 +193,9 @@ def add(root,data,db,run_process,fetch,rid):
    prepared.append(prepare(root,data,run_process,month,included,rows,audit,snapshot['through'],snapshot['checkedAt'],overrides))
   except Exception as error:
    state(db,month,'failed',str(error)[:700]);raise
- # Approval and all new rows publish together, after every affected month passes.
+ # The included-date mapping and all new rows publish together, after every affected month passes.
  with db() as c:
   c.executemany('INSERT OR REPLACE INTO main_books VALUES (?,?,?,?,?,?,?,?)',prepared)
   c.executemany('INSERT OR REPLACE INTO main_days VALUES (?,?)',[(day,rid) for day in days])
   c.execute('INSERT OR REPLACE INTO main_choices VALUES (?,?)',(rid,'yes'))
-  return {'choice':'yes','books':main.books(c),'message':'Approved dates added. Month-to-date statuses and points verified; PivotTables rebuilt.'}
+  return {'choice':'yes','books':main.books(c),'message':'Verified dates added automatically. Month-to-date statuses, points and comments checked; PivotTables rebuilt.'}
