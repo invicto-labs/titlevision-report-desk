@@ -58,10 +58,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Main workbook continuity tests failed' }
           python app/tests/test_monthly_sync.py
           if ($LASTEXITCODE -ne 0) { throw 'Monthly status refresh tests failed' }
+          python app/tests/test_name_mapping.py
+          if ($LASTEXITCODE -ne 0) { throw 'Private employee mapping tests failed' }
           node --test --test-isolation=none app/tests/rules.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Rule tests failed' }
           node --test --test-isolation=none app/tests/status_history.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Status popup reader tests failed' }
+          node --test --test-isolation=none app/tests/name_mapping.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Employee name mapping tests failed' }
       - name: Validate Excel file format with Microsoft Open XML SDK
         run: |
           Invoke-WebRequest 'https://api.nuget.org/v3-flatcontainer/documentformat.openxml/2.20.0/documentformat.openxml.2.20.0.nupkg' -OutFile .build/openxml.zip

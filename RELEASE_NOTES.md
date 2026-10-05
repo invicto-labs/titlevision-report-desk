@@ -1,3 +1,10 @@
+## Version 1.4.8
+
+- Resolve TitleVision Search and Typing task usernames through a private, role-specific employee roster before building Searcher, Typer and Final Error Contributor. The roster includes confirmed aliases such as KishoreK → Kishore R and AshwinK → Ashwin Kumar M, and corrects Navya S's ID to INV159.
+- Allow a Search employee to appear on a Typing task, or the reverse, using the matching website account while flagging the unusual team assignment for review. Unmapped website accounts retain their readable names and are flagged instead of being guessed.
+- Add an Employee name mapping upload in the app. The private mapping stays in this Windows account's app data, remains intact through updates, and is excluded from the public source and installer. Copy the same mapping file to another PC and upload it there.
+- New daily reports use the mapping immediately. Refresh status on an existing Main workbook to apply official names to previously collected errors while preserving saved manual contributor corrections, source statuses and points.
+
 ## Version 1.4.7
 
 - Add each verified manual or scheduled run to its Main monthly workbook automatically, replacing the full collected snapshot for an already covered date while keeping separate errors on repeated orders. Remove the Yes/No prompt.

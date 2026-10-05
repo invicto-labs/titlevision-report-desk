@@ -143,11 +143,16 @@ matching Node license to `app/desktop/licenses/Node-LICENSE.txt`, then run
 `python app/desktop/build_full.py`. See the release workflow for exact commands.
 
 The builder outputs installers and a portable ZIP under `outputs`. The old Codex
-spreadsheet library is not bundled. Private display-name mappings can be placed
-in `%LOCALAPPDATA%\TitleVision Report Desk\data\names.json`; keys are lowercased
-username prefixes, values are the desired report names. Existing installations
-preserve their mappings during activation. New installations use readable names
-derived from the recorded usernames until a mapping is supplied.
+spreadsheet library is not bundled. Private employee mapping files can be uploaded
+under **Employee name mapping** in the app or placed in
+`%LOCALAPPDATA%\TitleVision Report Desk\data\names.json`. Version 2 files have
+separate `search` and `type` alias maps, each mapping a lowercase username prefix
+to an employee ID and official name. Existing flat username-to-name maps remain
+supported. The roster is stored only on that Windows PC and survives updates; it
+is excluded from the public repository and installer. Copy the same JSON file to
+another PC and upload it there. New reports use the mapping; use **Refresh status**
+to update names in an existing Main workbook. Unmapped usernames remain readable
+and are flagged for review.
 
 ## Tests
 

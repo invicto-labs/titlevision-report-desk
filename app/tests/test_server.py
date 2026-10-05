@@ -63,6 +63,18 @@ class ServerTests(unittest.TestCase):
    with server.RunLock():
     with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
    self.assertEqual(save.call_count,1)
+ def test_private_roster_import_requires_csrf_and_updates_state(self):
+  path=self.url+'/api/names/import'
+  mapping={'schema':2,'search':{'kishorek':{'id':'INV060','name':'Kishore R'}},'type':{'deepikak':{'id':'INV160','name':'Kanna Deepika'}},'legacy':{}}
+  body=json.dumps(mapping).encode()
+  try:
+   req=urllib.request.Request(path,body,headers={'Origin':self.url})
+   with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
+   self.assertFalse((server.DATA/'names.json').exists())
+   req=urllib.request.Request(path,body,headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN})
+   with urllib.request.urlopen(req) as response:self.assertEqual(json.load(response)['searchAliases'],1)
+   self.assertTrue(server.public_state()['nameMapping']['loaded'])
+  finally:(server.DATA/'names.json').unlink(missing_ok=True)
  def test_main_choice_is_recorded_and_main_download_has_stable_name(self):
   rid='c'*32
   with server.db() as c:c.execute('INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,'2026-01-01','2026-01-01','review','test','now',2,3,1,None))

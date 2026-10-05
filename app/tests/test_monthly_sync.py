@@ -109,6 +109,22 @@ class MonthlySyncTests(unittest.TestCase):
   self.assertEqual([r[13] for r in rows],[3,2,4,.5]);self.assertTrue(all(r[22]=='Search' and r[23]=='Searcher' for r in rows))
   self.assertEqual(self.fetches[-1],('2026-10-01','2026-10-03'))
   self.add(b);self.assertEqual(len(self.book()[1]),4)
+ def test_private_roster_renames_existing_rows_without_losing_manual_corrections(self):
+  original=self.source(1,'2026-10-01');original['id']='local-one'
+  self.live=[copy.deepcopy(original)]
+  rid=self.seed('2026-10-01','2026-10-01',[original]);folder=self.data/'runs'/rid
+  (folder/'staff.json').write_text(json.dumps({'local-one':{'names':['KishoreK_ADSSearchType','DeepikaK_ADSSearchType']}}),encoding='utf8')
+  self.add(rid)
+  self.assertEqual(self.book()[1][0][18:24],['Searcher','','Typer','','Search','Searcher'])
+  mapping={'schema':2,'search':{'kishorek':{'id':'INV060','name':'Kishore R'}},'type':{'deepikak':{'id':'INV160','name':'Kanna Deepika'}},'legacy':{}}
+  (self.data/'names.json').write_text(json.dumps(mapping),encoding='utf8')
+  sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
+  row=self.book()[1][0]
+  self.assertEqual((row[18],row[20],row[23]),('Kishore R','Kanna Deepika','Kishore R'))
+  with self.db() as c:c.execute('INSERT INTO main_edits VALUES (?,?,?,?)',('2026-10','1',json.dumps({'18':'Reviewed Searcher'}),'now'))
+  sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
+  row=self.book()[1][0]
+  self.assertEqual((row[18],row[20],row[23]),('Reviewed Searcher','Kanna Deepika','Reviewed Searcher'))
  def test_refresh_updates_approved_rows_without_adding_unapproved_rows(self):
   approved=self.source(1,'2026-10-01');pending=self.source(2,'2026-10-02')
   self.live=[approved,pending];self.add(self.seed('2026-10-01','2026-10-01',[approved]))

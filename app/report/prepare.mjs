@@ -9,15 +9,38 @@ const read=async p=>JSON.parse(await fs.readFile(p,'utf8'));
 const source=await read(path.join(dir,'source.json')),staff=await read(path.join(dir,'staff.json'));
 const collection=await read(path.join(dir,'collection.json'));
 const personalNames=path.join(process.env.TITLEVISION_DATA??path.join(process.env.LOCALAPPDATA??app,'TitleVision Report Desk','data'),'names.json');
-const nameMap=await read(personalNames).catch(()=>read(path.join(app,'templates/names.json')));
+let nameMap;
+try{nameMap=await read(personalNames);}catch(error){if(error.code!=='ENOENT')throw error;nameMap=await read(path.join(app,'templates/names.json'));}
 const {headers,widths}=await read(path.join(app,'templates/layout.json'));
 const issues=[];
-function display(user){if(!user)return '';const n=user.replace(/_ADS.*$/i,'');return nameMap[n.toLowerCase()]??n.replace(/([a-z])([A-Z])/g,'$1 $2');}
+const unmapped=new Set();
+function display(user,role,id,order){
+ if(!user)return '';
+ const n=user.replace(/_ADS.*$/i,''),key=n.toLowerCase().replace(/[^a-z0-9]/g,'');
+ const match=nameMap.schema===2?nameMap[role.toLowerCase()]?.[key]:null;
+ if(match){if(typeof match.name!=='string'||!match.name.trim())throw Error('Invalid employee name mapping');return match.name;}
+ const otherRole=role==='Search'?'type':'search';
+ const crossRole=nameMap.schema===2?nameMap[otherRole]?.[key]:null;
+ if(crossRole){
+  if(typeof crossRole.name!=='string'||!crossRole.name.trim())throw Error('Invalid employee name mapping');
+  if(!unmapped.has(role+':'+key)){
+   unmapped.add(role+':'+key);
+   issues.push({id,order,kind:'roster_team_review',message:`${role} task was completed by ${n}, listed under the ${otherRole==='type'?'Typing':'Search'} team. Name ${crossRole.name} was used; review the team assignment.`});
+  }
+  return crossRole.name;
+ }
+ const legacy=nameMap.schema===2?nameMap.legacy:nameMap;
+ if(nameMap.schema===2&&!unmapped.has(role+':'+key)){
+  unmapped.add(role+':'+key);
+  issues.push({id,order,kind:'unmapped_name',message:`${role} website username ${n} is not in the employee roster. Its existing readable name was kept; verify this contributor.`});
+ }
+ return legacy?.[key]??n.replace(/([a-z])([A-Z])/g,'$1 $2');
+}
 const details=source.map(({values:r,id,statusFields,statusHistory})=>{
  const p=staff[id];if(!p)throw Error('Missing verified order '+r[1]);const team=teamFor(r);
  if((team==='Search'&&!p.names[0])||(team==='Type'&&!p.names[1]))issues.push({id,order:r[1],kind:'missing_name',message:`No completed human ${team==='Search'?'Search':'Typing'} task was recorded. Contributor left blank.`});
  if(/\b(?:VM|triage)\b/i.test(r[8])&&!['Triage','VM team'].includes(team))issues.push({id,order:r[1],kind:'cause_review',message:'Notes mention VM or triage. Review the cause before overriding Team.'});
- const searcher=display(p.names[0]),typer=display(p.names[1]);
+ const searcher=display(p.names[0],'Search',id,r[1]),typer=display(p.names[1],'Type',id,r[1]);
  const contributor=team==='Search'?searcher:team==='Type'?typer:['Triage','VM team'].includes(team)?team:'';
  if(statusHistory&&(!Array.isArray(statusFields)||statusFields.length!==4))throw Error('Status comment fields were not reconciled');
  const decision=statusFields??['','','',''];

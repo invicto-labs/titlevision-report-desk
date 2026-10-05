@@ -15,6 +15,16 @@ $('schedule').onclick=async()=>{$('schedule').disabled=true;try{await api('/api/
 $('history').onclick=e=>{if(e.target.closest('a'))return;const row=e.target.closest('[data-id]');if(row)detail(state.runs.find(r=>r.id===row.dataset.id)).catch(e=>notice(e.message,true));};
 $('history').onkeydown=e=>{if(e.key==='Enter'){const row=e.target.closest('[data-id]');if(row)detail(state.runs.find(r=>r.id===row.dataset.id)).catch(e=>notice(e.message,true));}};
 function updateDisplay(){if(!state)return;$('app-version').textContent=state.version?'Running v'+state.version:'Version unavailable';const updating=['downloading','installing'].includes(state.update?.phase);$('get-update').disabled=mainBusy||checkingUpdate||updating||state.runs.some(r=>['running','queued'].includes(r.status));$('get-update').textContent=checkingUpdate?'Checking…':updating?'Updating…':'Get update';$('update-status').textContent=checkingUpdate?'Checking the latest published release…':updateMessage||state.update?.message||'Check for a published release.';$('github-state').textContent=state.githubAccessSaved?'GitHub update access is saved and encrypted.':'No token saved. An existing Git sign-in as invicto-labs will be used if available.';}
+$('name-map-form').onsubmit=async e=>{
+ e.preventDefault();const file=$('name-map-file').files[0];if(!file)return;
+ if(file.size>128*1024){notice('Choose an employee mapping JSON file smaller than 128 KB.',true);return;}
+ const button=e.target.querySelector('button');button.disabled=true;
+ try{
+  const response=await fetch('/api/names/import',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrf},body:file});
+  const result=await response.json();if(!response.ok)throw Error(result.error||'Employee names could not be saved');
+  $('name-map-file').value='';notice(result.message);await refreshWithVersion();
+ }catch(error){notice(error.message,true);}finally{button.disabled=false;}
+};
 $('get-update').onclick=async()=>{if(checkingUpdate)return;checkingUpdate=true;updateMessage='';updateDisplay();try{const result=await api('/api/update/install',{});await refresh();if(!result.available)updateMessage='You are running the latest version: v'+result.current+'.';}catch(e){updateMessage=e.message;}finally{checkingUpdate=false;updateDisplay();}};
 $('github-access').onsubmit=async e=>{e.preventDefault();if(!$('github-token').value.trim())return;try{await api('/api/update/token',{token:$('github-token').value});$('github-token').value='';notice('GitHub update access saved.');updateMessage='';await refresh();}catch(e){notice(e.message,true);}updateDisplay();};
 $('clear-github-access').onclick=async()=>{try{await api('/api/update/token',{token:''});await refresh();updateDisplay();notice('Saved GitHub access removed.');}catch(e){notice(e.message,true);}};
@@ -59,7 +69,7 @@ function chooseEditedWorkbook(month){
 $('create-main-form').onsubmit=e=>{e.preventDefault();manageMain('create',$('main-month').value);};
 $('main-books').onclick=e=>{const button=e.target.closest('button[data-action]');if(button)manageMain(button.dataset.action,button.dataset.month);};
 
-async function refreshWithVersion(){await refresh();updateDisplay();}refreshWithVersion();setInterval(refreshWithVersion,5000);
+async function refreshWithVersion(){await refresh();updateDisplay();if(state)$('name-map-status').textContent=state.nameMapping?.loaded?`Loaded · ${state.nameMapping.searchAliases} Search / ${state.nameMapping.typingAliases} Typing aliases`:'No roster loaded';}refreshWithVersion();setInterval(refreshWithVersion,5000);
 if(document.modelContext?.registerTool){
  const life=new AbortController();window.addEventListener('pagehide',()=>life.abort(),{once:true});
  Promise.resolve(document.modelContext.registerTool({name:'get_report_runs',title:'Read report history',description:'Read the local TitleVision report runs and their completion or review status.',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true,untrustedContentHint:true},async execute(){await refresh();return {runs:state.runs,scheduleEnabled:state.schedule};}},{signal:life.signal})).catch(()=>{});

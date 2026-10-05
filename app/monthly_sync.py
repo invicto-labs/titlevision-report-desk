@@ -9,6 +9,7 @@ from urllib.parse import urlparse,parse_qs
 import calendar,hashlib,json,math,re,sys,uuid
 import main_workbook as main
 import manual_edits
+import name_mapping
 from reconcile import canonical
 from status_history import fields as status_fields
 
@@ -76,7 +77,15 @@ def records(root,data,db,month,selected):
    source=json.loads((folder/'source.json').read_text(encoding='utf8'))
    rows=json.loads((folder/'payload.json').read_text(encoding='utf8'))['data'][1:]
    if len(source)!=len(rows):raise ValueError('Daily error identity count does not match')
+   staff_file=folder/'staff.json'
+   staff=json.loads(staff_file.read_text(encoding='utf8')) if staff_file.is_file() else {}
    cache[rid]=list(zip(source,rows))
+   for record,_ in cache[rid]:
+    worker=staff.get(record.get('id'),{})
+    names=worker.get('names') if isinstance(worker,dict) else None
+    if names is not None:
+     if not isinstance(names,list) or len(names)!=2 or any(not isinstance(n,str) for n in names):raise ValueError('Invalid saved task usernames')
+     record['workerNames']=names
   for source,row in cache[rid]:
    if main.row_day(row)!=day:continue
    if source['values'][1]!=row[1]:raise ValueError('Daily error identity is attached to another order')
@@ -85,7 +94,7 @@ def records(root,data,db,month,selected):
    if key in seen:raise ValueError('Duplicate error ID in included daily reports')
    seen.add(key);result.append((source,row))
  return result
-def overlay(entries,current):
+def overlay(entries,current,name_map=None):
  rows=[];audit=[]
  for original,row in entries:
   key=source_id(original);latest=current.get(key)
@@ -93,6 +102,10 @@ def overlay(entries,current):
   if order_key(original)!=order_key(latest):raise ValueError('A source error ID changed its order or Created Date; review required')
   values=latest['values'];updated=list(row)
   updated[0]=values[0];updated[13]=float(values[15])
+  if name_map and original.get('workerNames'):
+   for field,role,user in ((18,'Search',original['workerNames'][0]),(20,'Type',original['workerNames'][1])):
+    display=name_mapping.mapped(name_map,user,role)
+    if display:updated[field]=display
   # Keep contributor choices/descriptions and refresh both source decisions/comments.
   updated[24:28]=status_fields(latest,required=True)
   modified=canonical(values)[16]
@@ -139,7 +152,7 @@ def refresh(root,data,db,run_process,fetch,month):
   book=None
   if exists:
    days=sorted(d for d in selected if d.startswith(month+'-'))
-   rows,audit=overlay(records(root,data,db,month,selected),current)
+   rows,audit=overlay(records(root,data,db,month,selected),current,name_mapping.load(data))
    rows,overrides=manual_edits.apply(rows,audit,manual_edits.load(db,month))
    book=prepare(root,data,run_process,month,days,rows,audit,end.isoformat(),checked,overrides)
   with db() as c:
@@ -187,7 +200,7 @@ def add(root,data,db,run_process,fetch,rid):
  for month in months:
   snapshot=refresh(root,data,db,run_process,fetch,month)
   try:
-   rows,audit=overlay(entries[month],snapshot['current'])
+   rows,audit=overlay(entries[month],snapshot['current'],name_mapping.load(data))
    rows,overrides=manual_edits.apply(rows,audit,manual_edits.load(db,month))
    included=sorted(d for d in selected if d.startswith(month+'-'))
    prepared.append(prepare(root,data,run_process,month,included,rows,audit,snapshot['through'],snapshot['checkedAt'],overrides))
