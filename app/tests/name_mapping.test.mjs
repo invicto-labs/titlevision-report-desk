@@ -15,8 +15,8 @@ test('private role-specific roster controls daily Searcher, Typer and contributo
  for(const [name,value] of Object.entries({'source.json':source,'staff.json':staff,'collection.json':{start:'2026-10-01',end:'2026-10-01',count:3,points:3},'names.json':mapping}))fs.writeFileSync(path.join(folder,name),JSON.stringify(value));
  execFileSync(process.execPath,[path.join(app,'report','prepare.mjs'),folder],{env:{...process.env,TITLEVISION_DATA:folder}});
  const rows=JSON.parse(fs.readFileSync(path.join(folder,'payload.json'),'utf8')).data.slice(1);
- assert.deepEqual([rows[0][18],rows[0][20],rows[0][23]],['Kishore R','Kanna Deepika','Kishore R']);
- assert.deepEqual([rows[1][18],rows[1][20],rows[1][23]],['Ashwin Kumar M','Sachin S','Sachin S']);
- assert.deepEqual([rows[2][18],rows[2][20],rows[2][23]],['','Kishore R','Kishore R']);
+ assert.deepEqual([rows[0][18],rows[0][20],rows[0][22]],['Kishore R','Kanna Deepika','Kishore R']);
+ assert.deepEqual([rows[1][18],rows[1][20],rows[1][22]],['Ashwin Kumar M','Sachin S','Sachin S']);
+ assert.deepEqual([rows[2][18],rows[2][20],rows[2][22]],['','Kishore R','Kishore R']);
  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(folder,'issues.json'),'utf8')).map(i=>i.kind),['roster_team_review']);
 });

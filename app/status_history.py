@@ -15,15 +15,23 @@ def fields(record,required=False):
  if not history:
   if required and status!='New':raise ValueError('Status comment history is missing; collect these dates again')
   return ['','','','']
- if history.get('schema')!=1:raise ValueError('Status comment history schema changed')
+ schema=history.get('schema')
+ if schema not in (1,2):raise ValueError('Status comment history schema changed')
  order=parse_qs(urlparse(record['url']).query).get('PublicOrderId',[''])[0]
  url=urlparse(history.get('url',''));query=parse_qs(url.query)
  if url.scheme!='https' or url.netloc!='tv.datatracetitle.com' or url.path!='/UserErrors.aspx' or query.get('EditMode')!=['Status'] or query.get('UserErrorId')!=[record.get('sourceId')] or query.get('PublicOrderId')!=[order] or history.get('sourceId')!=record.get('sourceId') or history.get('orderId')!=order:
   raise ValueError('Status comment history does not match its error identity')
- if history.get('status')!=status or history.get('vendor')!=values[2]:raise ValueError('Status comment history no longer matches the source status/vendor')
+ if history.get('status')!=status:raise ValueError('Status comment history no longer matches the source status')
+ if schema==1 and history.get('vendor')!=values[2]:raise ValueError('Status comment history no longer matches the source vendor')
+ if schema==2 and (not isinstance(history.get('assignedUser'),str) or not history['assignedUser'].strip()):raise ValueError('Status comment history has no assigned user')
  users=history.get('vendorUsers');comments=history.get('comments')
  if not isinstance(users,list) or not users or any(not isinstance(u,str) or not u.strip() for u in users) or not isinstance(comments,list):raise ValueError('Invalid source comment authors or rows')
- own={u.casefold() for u in users};parsed=[]
+ if schema==2:
+  internal=history.get('internalUsers')
+  if not isinstance(internal,list) or not internal or any(not isinstance(u,str) or not u.strip() for u in internal) or any(u not in users for u in internal):raise ValueError('Invalid internal comment authors')
+  own={u.casefold() for u in internal}
+ else:own={u.casefold() for u in users}
+ parsed=[]
  for row in comments:
   if not isinstance(row,list) or len(row)!=3 or any(not isinstance(v,str) for v in row):raise ValueError('Invalid status comment row')
   stamp,user,text=row

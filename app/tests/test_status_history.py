@@ -37,6 +37,14 @@ class StatusHistoryTests(unittest.TestCase):
   for mutate in [lambda h:h.update(sourceId='other'),lambda h:h.update(orderId='other'),lambda h:h.update(url=h['url'].replace('219795','219796')),lambda h:h.update(status='Disputed'),lambda h:h.update(vendor='Other'),lambda h:h.update(schema=2),lambda h:h.update(vendorUsers=[]),lambda h:h['comments'].append(['bad date','brucec','Bad']),lambda h:h['comments'].append(['8/5/2026 5:06:50 AM','ChristieR','Conflicting final'])]:
    r=sample();mutate(r['statusHistory'])
    with self.subTest(record=r),self.assertRaises(ValueError):fields(r)
+ def test_assigned_user_can_differ_from_export_vendor_without_claiming_external_reply(self):
+  r=sample();h=r['statusHistory'];h['schema']=2;h.pop('vendor')
+  h['assignedUser']='Mekala_FAI';h['vendorUsers'].append('Mekala_FAI')
+  h['internalUsers']=['ADSSP2_PerformanceModuleManager','brucec_ADSSP2']
+  h['comments'][1][1]='Mekala_FAI'
+  self.assertEqual(fields(r),['Disputed',h['comments'][0][2],'Non-Chargeable','Training, reason accepted'])
+  h['internalUsers'].append('UnknownUser')
+  with self.assertRaisesRegex(ValueError,'internal comment authors'):fields(r)
  def test_old_reports_readable_but_fresh_final_snapshots_require_history(self):
   r=sample();r.pop('statusHistory');self.assertEqual(fields(r),['']*4)
   with self.assertRaises(ValueError):fields(r,required=True)

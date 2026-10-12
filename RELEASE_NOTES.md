@@ -1,3 +1,8 @@
+## Version 1.4.9
+
+- Place the editable Team dropdown in column D where TraceQ used to be. Remove the old Team column and keep the Final Error Contributor formula, saved corrections, status columns and four PivotTables working. Previously verified report snapshots are converted when they are added or refreshed.
+- Read the TitleVision Status popup's User / Vendor selection as an assigned account. It can differ from the export's Vendor field, as on ADVOCUS26019754IL. Continue verifying the native error ID, order and status; classify only known ADS accounts as internal comment authors.
+
 ## Version 1.4.8
 
 - Resolve TitleVision Search and Typing task usernames through a private, role-specific employee roster before building Searcher, Typer and Final Error Contributor. The roster includes confirmed aliases such as KishoreK → Kishore R and AshwinK → Ashwin Kumar M, and corrects Navya S's ID to INV159.

@@ -6,6 +6,7 @@ import json, shutil, sqlite3, subprocess, sys, unittest, uuid
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import main_workbook as main
+import report_layout
 ROOT=Path(__file__).resolve().parents[1]
 
 class MainWorkbookTests(unittest.TestCase):
@@ -24,11 +25,11 @@ class MainWorkbookTests(unittest.TestCase):
         finally:c.close()
 
     def row(self,day,category='Searching',points=1):
-        r=['']*28;r[0]='New';r[1]='SAME-ORDER-123';r[6]=category
+        r=['']*27;r[0]='New';r[1]='SAME-ORDER-123';r[6]=category
         r[10]=(date.fromisoformat(day)-date(1899,12,30)).days+.5
         r[14]=r[15]=int(r[10])
         r[13]=points;r[18]='Example Searcher';r[20]='Example Typer'
-        r[22]='Search' if category=='Searching' else 'Type';r[23]=r[18] if r[22]=='Search' else r[20]
+        r[3]='Search' if category=='Searching' else 'Type';r[22]=r[18] if r[3]=='Search' else r[20]
         return r
 
     def seed(self,start,end,rows,status='complete'):
@@ -88,6 +89,17 @@ class MainWorkbookTests(unittest.TestCase):
         a=self.row('2026-09-30');b=self.row('2026-10-01')
         self.choose(self.seed('2026-09-30','2026-10-01',[a,b]))
         self.assertEqual(self.read('2026-09'),[a]);self.assertEqual(self.read('2026-10'),[b])
+
+    def test_older_verified_report_moves_team_without_losing_rows(self):
+        current=self.row('2026-10-01')
+        rid=self.seed('2026-10-01','2026-10-01',[current])
+        legacy=[*current[:3],'',*current[4:22],current[3],*current[22:]]
+        folder=self.data/'runs'/rid
+        payload=json.loads((folder/'payload.json').read_text(encoding='utf8'))
+        payload['data']=[report_layout.LEGACY_HEADERS,legacy]
+        (folder/'payload.json').write_text(json.dumps(payload),encoding='utf8')
+        self.choose(rid)
+        self.assertEqual(self.read('2026-10'),[current])
 
     def test_build_failure_does_not_publish_any_partial_month_or_decision(self):
         first=self.seed('2026-09-30','2026-09-30',[self.row('2026-09-30')]);self.choose(first)

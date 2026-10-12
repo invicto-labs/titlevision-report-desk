@@ -24,7 +24,7 @@ def rel(parent,id,kind,target):E.SubElement(parent,'{'+P+'}Relationship',Id=id,T
 def relroot():return E.Element('{'+P+'}Relationships',nsmap={None:P})
 def iso(v):return (datetime(1899,12,30)+timedelta(days=v)).isoformat(timespec='seconds')
 def atom(parent,v,j):
- if j==23 and v=='':return sub(parent,'s',{'v':''})
+ if j==22 and v=='':return sub(parent,'s',{'v':''})
  if v is None or v=='':return sub(parent,'m')
  if j in {10,14,15}:return sub(parent,'d',{'v':iso(v)})
  if isinstance(v,(int,float)):return sub(parent,'n',{'v':str(v)})
@@ -39,8 +39,8 @@ fields=sub(cache,'cacheFields',{'count':str(len(headers))})
 for j,h in enumerate(headers):
  f=sub(fields,'cacheField',{'name':h,'numFmtId':'14' if j in {10,14,15} else '0'})
  vals=[r[j] for r in rows];typed_values=shared.get(j,vals);nonblank=[v for v in typed_values if v is not None and v!=''];attrs={}
- if len(nonblank)<len(typed_values) and j!=23:attrs['containsBlank']='1'
- if not nonblank:attrs.update(containsNonDate='1' if j==23 else '0',containsString='1' if j==23 else '0')
+ if len(nonblank)<len(typed_values) and j!=22:attrs['containsBlank']='1'
+ if not nonblank:attrs.update(containsNonDate='1' if j==22 else '0',containsString='1' if j==22 else '0')
  elif j in {10,14,15}:attrs.update(containsSemiMixedTypes='0',containsNonDate='0',containsDate='1',containsString='0',minDate=iso(min(nonblank)),maxDate=iso(max(nonblank)))
  elif all(isinstance(v,(int,float)) for v in nonblank):attrs.update(containsSemiMixedTypes='0',containsString='0',containsNumber='1',containsInteger='1',minValue=str(min(nonblank)),maxValue=str(max(nonblank)))
  elif any(len(str(v))>255 for v in nonblank):attrs['longText']='1'
@@ -95,7 +95,9 @@ for k,p in enumerate(payload['specs'],1):
  pt.set('cacheId','1');pt.set('enableDrill','1');pt.set('preserveFormatting','1');pt.set('showMissing','1');pt.set('missingCaption','0')
  col=p['col'];start=p['row'];end=start+p['height']-1
  loc=pt.find(q('location'));loc.set('ref',f'{chr(65+col)}{start}:{chr(67+col)}{end}');loc.set('firstHeaderRow','1');loc.set('firstDataRow','2')
+ pt.find(q('rowFields')).find(q('field')).set('x',str(p['field']))
  pf=pt.find(q('pivotFields'))
+ while len(pf)>len(headers):pf.remove(pf[-1])
  while len(pf)<len(headers):sub(pf,'pivotField')
  pf.set('count',str(len(headers)))
  for j,f in enumerate(pf):
@@ -136,17 +138,17 @@ assert len(f['Summary']._pivots)==4
 assert f['SP 2'].freeze_panes=='D2'
 assert len(f['SP 2'].data_validations.dataValidation)==1
 for i,r in enumerate(rows,2):
- team=r[22].strip();expected_contributor='Triage' if team=='Triage' else 'VM team' if team=='VM team' else r[18] if team=='Search' else r[20] if team in {'Type','Typing'} else ''
+ team=r[3].strip();expected_contributor='Triage' if team=='Triage' else 'VM team' if team=='VM team' else r[18] if team=='Search' else r[20] if team in {'Type','Typing'} else ''
  override=(payload.get('contributorOverrides') or [None]*len(rows))[i-2]
  if override:expected_contributor=override['name']
- assert (r[23] or '')==(expected_contributor or ''),'Contributor does not follow Team'
+ assert (r[22] or '')==(expected_contributor or ''),'Contributor does not follow Team'
  for j,val in enumerate(r,1):
   actual=v['SP 2'].cell(i,j).value
   if j in {11,15,16} and val is not None:assert abs((actual-datetime(1899,12,30)).total_seconds()/86400-val)<1e-7
   else:assert (actual if actual is not None else '')==(val if val is not None else ''),(i,j,actual,val)
- assert f['SP 2'].cell(i,24).value.startswith('=IF(TRIM(W')
- for j in range(1,29):
-  if j!=24:assert f['SP 2'].cell(i,j).data_type!='f','Unexpected formula in source data'
+ assert f['SP 2'].cell(i,23).value.startswith('=IF(TRIM(D')
+ for j in range(1,28):
+  if j!=23:assert f['SP 2'].cell(i,j).data_type!='f','Unexpected formula in source data'
 assert len(records)==len(rows) and all(len(r)==len(headers) for r in records)
 for p in payload['specs']:
  assert sum(1 for r in rows if (r[p['field']] or '') in p['items'])==len(rows)

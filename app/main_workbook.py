@@ -6,6 +6,7 @@ is preserved. Re-collecting a date replaces that date's approved snapshot only.
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import json, math, re, sys, uuid
+import report_layout
 
 
 def initialize(connection):
@@ -44,8 +45,9 @@ def load_report(root, data, run):
     payload = json.loads((folder/'payload.json').read_text(encoding='utf8'))
     collection = json.loads((folder/'collection.json').read_text(encoding='utf8'))
     layout = json.loads((root/'templates/layout.json').read_text(encoding='utf8'))
-    headers, *rows = payload['data']
-    if headers != layout['headers'] or any(len(r) != len(headers) for r in rows):
+    headers, *saved_rows = payload['data']
+    rows = report_layout.current_rows(headers, saved_rows)
+    if layout['headers'] != report_layout.HEADERS:
         raise ValueError('Report columns do not match the main workbook.')
     if collection['start'] != run['start'] or collection['end'] != run['end']:
         raise ValueError('Report dates do not match the verified collection.')
@@ -66,13 +68,13 @@ def make_payload(root, rows):
     layout = json.loads((root/'templates/layout.json').read_text(encoding='utf8'))
     specs = []
     for name, field, title, col, row in [
-        ('ErrorsByContributor',23,'Final Error Contributor',0,5),
-        ('ErrorsByTeam',22,'Team',4,5),
+        ('ErrorsByContributor',22,'Final Error Contributor',0,5),
+        ('ErrorsByTeam',3,'Team',4,5),
         ('ErrorsByCategory',6,'Error Category',8,5),
         ('ErrorsByStatus',0,'Status',4,15),
     ]:
         items = {r[field] or '' for r in rows}
-        if field in (22,23):
+        if field in (3,22):
             items.add('VM team')
         items = sorted(items, key=lambda item: (item == '', item.casefold()))
         specs.append(dict(name=name,field=field,title=title,col=col,row=row,items=items,height=len(items)+3))

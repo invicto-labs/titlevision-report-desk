@@ -77,8 +77,8 @@ does not duplicate records. Ranges spanning two months update the matching month
 
 ### Save reviewed contributor edits (v1.4.5)
 
-For September 2026 and later months, download the latest Main workbook, change Team,
-Searcher, Typer or Final Error Contributor in Excel, and save the file. In the app,
+For September 2026 and later months, download the latest Main workbook, change Team
+in column D, Searcher, Typer or Final Error Contributor in Excel, and save the file. In the app,
 click **Save Excel edits** beside that month and select the saved `.xlsx`.
 The confirmation means the corrections are stored locally and included in future
 refreshes, daily additions and re-collections of that error. Different errors on

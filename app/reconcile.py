@@ -65,7 +65,7 @@ def reconcile(directory):
   row['values']=pool[canonical(row['values'])].popleft()
   # Derive from the verified popup after the native export matches the grid.
   # Legacy saved exports remain readable; fresh non-New collections must carry history.
-  row['statusFields']=status_fields(row,required=collection.get('statusHistoryVersion')==1 or bool(row.get('statusHistory')))
+  row['statusFields']=status_fields(row,required=collection.get('statusHistoryVersion') in (1,2) or bool(row.get('statusHistory')))
  (root/'source.json').write_text(json.dumps(source,ensure_ascii=False,indent=2),encoding='utf8')
  (root/'reconciled.json').write_text(json.dumps({'count':len(source),'sourceSha256':hashlib.sha256((root/'source.json').read_bytes()).hexdigest(),'exportSha256':hashlib.sha256((root/'source.xlsx').read_bytes()).hexdigest()}),encoding='utf8')
  print(f'Reconciled all {len(exported)} exported error rows.')

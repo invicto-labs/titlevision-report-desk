@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse,parse_qs
 import calendar,hashlib,json,math,re,sys,uuid
 import main_workbook as main
+import report_layout
 import manual_edits
 import name_mapping
 from reconcile import canonical
@@ -75,7 +76,8 @@ def records(root,data,db,month,selected):
    main.load_report(root,data,runs[rid])
    folder=data/'runs'/rid
    source=json.loads((folder/'source.json').read_text(encoding='utf8'))
-   rows=json.loads((folder/'payload.json').read_text(encoding='utf8'))['data'][1:]
+   saved=json.loads((folder/'payload.json').read_text(encoding='utf8'))['data']
+   rows=report_layout.current_rows(saved[0],saved[1:])
    if len(source)!=len(rows):raise ValueError('Daily error identity count does not match')
    staff_file=folder/'staff.json'
    staff=json.loads(staff_file.read_text(encoding='utf8')) if staff_file.is_file() else {}
@@ -107,10 +109,10 @@ def overlay(entries,current,name_map=None):
     display=name_mapping.mapped(name_map,user,role)
     if display:updated[field]=display
   # Keep contributor choices/descriptions and refresh both source decisions/comments.
-  updated[24:28]=status_fields(latest,required=True)
+  updated[23:27]=status_fields(latest,required=True)
   modified=canonical(values)[16]
   updated[14]=(datetime.fromisoformat(modified)-datetime(1899,12,30)).total_seconds()/86400 if modified else None
-  rows.append(updated);audit.append({'sourceId':key,'order':row[1],'oldStatus':row[0],'status':updated[0],'oldPoints':row[13],'points':updated[13],'oldDecisionFields':row[24:28],'decisionFields':updated[24:28],'commentHistory':latest.get('statusHistory')})
+  rows.append(updated);audit.append({'sourceId':key,'order':row[1],'oldStatus':row[0],'status':updated[0],'oldPoints':row[13],'points':updated[13],'oldDecisionFields':row[23:27],'decisionFields':updated[23:27],'commentHistory':latest.get('statusHistory')})
  return rows,audit
 def prepare(root,data,run_process,month,days,rows,audit,through,checked,overrides=None):
  folder=data/'main'/month/uuid.uuid4().hex;folder.mkdir(parents=True)

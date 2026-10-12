@@ -34,9 +34,9 @@ class MonthlySyncTests(unittest.TestCase):
   rid=uuid.uuid4().hex;folder=self.data/'runs'/rid;folder.mkdir(parents=True)
   rows=[]
   for s in source:
-   v=s['values'];r=['']*28;r[0]=v[0];r[1]=v[1];r[6]=v[6];r[7]=v[7];r[9]=v[9]
+   v=s['values'];r=['']*27;r[0]=v[0];r[1]=v[1];r[6]=v[6];r[7]=v[7];r[9]=v[9]
    r[10]=(datetime.strptime(v[12],'%m/%d/%Y %I:%M:%S %p')-datetime(1899,12,30)).total_seconds()/86400
-   r[13]=float(v[15]);r[14]=r[15]=int(r[10]);r[16]=v[18];r[18]='Searcher';r[20]='Typer';r[22]='Search';r[23]='Searcher';rows.append(r)
+   r[13]=float(v[15]);r[14]=r[15]=int(r[10]);r[16]=v[18];r[18]='Searcher';r[20]='Typer';r[3]='Search';r[22]='Searcher';rows.append(r)
   collection={'start':start,'end':end,'count':len(rows),'points':sum(r[13] for r in rows)}
   for name,obj in [('source.json',source),('payload.json',main.make_payload(ROOT,rows)),('collection.json',collection),('validation.json',{'passed':True,**collection})]:(folder/name).write_text(json.dumps(obj),encoding='utf8')
   with self.db() as c:c.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,start,end,'complete','verified','now',len(rows),collection['points'],0,None))
@@ -96,7 +96,7 @@ class MonthlySyncTests(unittest.TestCase):
   with self.db() as c:file=main.download(self.data,c,'2026-09')
   row=json.loads((file.parent/'payload.json').read_text())['data'][1]
   self.assertEqual(row[0],'Non-Chargeable')
-  self.assertEqual(row[24:28],['Disputed','Our reply','Non-Chargeable','Client reply'])
+  self.assertEqual(row[23:27],['Disputed','Our reply','Non-Chargeable','Client reply'])
   self.assertEqual(sync.disputed_months(self.data,self.db),[])
  def test_exact_error_ids_preserve_repeated_orders_and_actual_nonchargeable_points(self):
   first=[self.source(1,'2026-10-01'),self.source(2,'2026-10-01')]
@@ -106,7 +106,7 @@ class MonthlySyncTests(unittest.TestCase):
   for s,status,points in zip(self.live,['New','Disputed','Chargeable','Non-Chargeable'],[3,2,4,.5]):s['values'][0]=status;s['values'][15]=str(points)
   self.add(b);_,rows=self.book()
   self.assertEqual(len(rows),4);self.assertEqual([r[0] for r in rows],['New','Disputed','Chargeable','Non-Chargeable'])
-  self.assertEqual([r[13] for r in rows],[3,2,4,.5]);self.assertTrue(all(r[22]=='Search' and r[23]=='Searcher' for r in rows))
+  self.assertEqual([r[13] for r in rows],[3,2,4,.5]);self.assertTrue(all(r[3]=='Search' and r[22]=='Searcher' for r in rows))
   self.assertEqual(self.fetches[-1],('2026-10-01','2026-10-03'))
   self.add(b);self.assertEqual(len(self.book()[1]),4)
  def test_private_roster_renames_existing_rows_without_losing_manual_corrections(self):
@@ -115,16 +115,23 @@ class MonthlySyncTests(unittest.TestCase):
   rid=self.seed('2026-10-01','2026-10-01',[original]);folder=self.data/'runs'/rid
   (folder/'staff.json').write_text(json.dumps({'local-one':{'names':['KishoreK_ADSSearchType','DeepikaK_ADSSearchType']}}),encoding='utf8')
   self.add(rid)
-  self.assertEqual(self.book()[1][0][18:24],['Searcher','','Typer','','Search','Searcher'])
+  self.assertEqual(self.book()[1][0][3],'Search');self.assertEqual(self.book()[1][0][18:23],['Searcher','','Typer','','Searcher'])
   mapping={'schema':2,'search':{'kishorek':{'id':'INV060','name':'Kishore R'}},'type':{'deepikak':{'id':'INV160','name':'Kanna Deepika'}},'legacy':{}}
   (self.data/'names.json').write_text(json.dumps(mapping),encoding='utf8')
   sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
   row=self.book()[1][0]
-  self.assertEqual((row[18],row[20],row[23]),('Kishore R','Kanna Deepika','Kishore R'))
+  self.assertEqual((row[18],row[20],row[22]),('Kishore R','Kanna Deepika','Kishore R'))
   with self.db() as c:c.execute('INSERT INTO main_edits VALUES (?,?,?,?)',('2026-10','1',json.dumps({'18':'Reviewed Searcher'}),'now'))
   sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
   row=self.book()[1][0]
-  self.assertEqual((row[18],row[20],row[23]),('Reviewed Searcher','Kanna Deepika','Reviewed Searcher'))
+  self.assertEqual((row[18],row[20],row[22]),('Reviewed Searcher','Kanna Deepika','Reviewed Searcher'))
+ def test_team_edit_saved_in_older_layout_is_preserved(self):
+  original=self.source(1,'2026-10-01');self.live=[copy.deepcopy(original)]
+  self.add(self.seed('2026-10-01','2026-10-01',[original]))
+  with self.db() as c:c.execute('INSERT INTO main_edits VALUES (?,?,?,?)',('2026-10','1',json.dumps({'22':'Type'}),'now'))
+  sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
+  row=self.book()[1][0]
+  self.assertEqual((row[3],row[22]),('Type','Typer'))
  def test_refresh_updates_approved_rows_without_adding_unapproved_rows(self):
   approved=self.source(1,'2026-10-01');pending=self.source(2,'2026-10-02')
   self.live=[approved,pending];self.add(self.seed('2026-10-01','2026-10-01',[approved]))
@@ -144,17 +151,17 @@ class MonthlySyncTests(unittest.TestCase):
     _,rows=self.book();self.assertEqual(len(rows),1)
     self.assertEqual(rows[0][0],status);self.assertEqual(rows[0][13],points)
     self.assertEqual(rows[0][14],(datetime(2026,10,3)-datetime(1899,12,30)).days)
-    self.assertEqual(rows[0][22:24],['Search','Searcher'])
+    self.assertEqual((rows[0][3],rows[0][22]),('Search','Searcher'))
  def test_decisions_comments_refresh_even_without_status_change_and_missing_history_retains_book(self):
   original=self.source(1,'2026-10-01');self.live=[copy.deepcopy(original)];rid=self.seed('2026-10-01','2026-10-01',[original]);self.add(rid)
   current=self.live[0];current['values'][0]='Non-Chargeable'
   sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
-  self.assertEqual(self.book()[1][0][24:28],['Disputed','Our reply','Non-Chargeable','Client reply'])
+  self.assertEqual(self.book()[1][0][23:27],['Disputed','Our reply','Non-Chargeable','Client reply'])
   folder=self.data/'probe';folder.mkdir();self.fetch('2026-10-01','2026-10-03',folder)
   current['statusHistory']=json.loads((folder/'source.json').read_text())[0]['statusHistory']
   current['statusHistory']['comments'][-1][2]='Training, reason accepted'
   sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
-  self.assertEqual(self.book()[1][0][27],'Training, reason accepted')
+  self.assertEqual(self.book()[1][0][26],'Training, reason accepted')
   before=self.book()[0]
   def incomplete(a,b,f):
    self.fetch(a,b,f)
@@ -207,7 +214,7 @@ class MonthlySyncTests(unittest.TestCase):
   self.assertEqual(wb['Summary']['A2'].value,'October 2026 Main Workbook')
   self.assertEqual([wb['SP 2'].cell(i+2,1).value for i in range(6)],list(SITE_STATUSES))
   self.assertEqual([wb['SP 2'].cell(i+2,14).value for i in range(6)],points)
-  self.assertEqual([wb['SP 2'].cell(7,j).value for j in range(25,29)],['Disputed','Our reply','Chargeable','Client reply'])
+  self.assertEqual([wb['SP 2'].cell(7,j).value for j in range(24,28)],['Disputed','Our reply','Chargeable','Client reply'])
   self.assertEqual(len(wb['Summary']._pivots),4)
   for pivot in wb['Summary']._pivots:
    self.assertEqual(pivot.cache.recordCount,6)
@@ -234,7 +241,7 @@ class MonthlySyncTests(unittest.TestCase):
   first=[self.source(1,'2026-10-01'),self.source(2,'2026-10-01')]
   self.live=copy.deepcopy(first);a=self.seed('2026-10-01','2026-10-01',first);self.add(a,self.real_build)
   def change(wb):
-   sheet=wb['SP 2'];sheet['W2']='Type';sheet['U2']='Corrected Typer';sheet['X3']='Reviewed Contributor'
+   sheet=wb['SP 2'];sheet['D2']='Type';sheet['U2']='Corrected Typer';sheet['W3']='Reviewed Contributor'
    # Sorting must move the hidden native ID with its row.
    values=[list(row) for row in sheet.values][1:]
    for i,row in enumerate(reversed(values),2):
@@ -245,16 +252,16 @@ class MonthlySyncTests(unittest.TestCase):
   self.live[0]['values'][0]='Non-Chargeable';self.live[0]['values'][15]='1'
   b=self.seed('2026-10-02','2026-10-02',[next_day]);self.add(b,self.real_build)
   file,rows=self.book();self.assertEqual(len(rows),3)
-  self.assertEqual(rows[0][20:24],['Corrected Typer','','Type','Corrected Typer'])
-  self.assertEqual(rows[1][23],'Reviewed Contributor');self.assertEqual(rows[2][23],'Searcher')
-  self.assertEqual(rows[0][24:28],['Disputed','Our reply','Non-Chargeable','Client reply'])
+  self.assertEqual((rows[0][3],rows[0][20:23]),('Type',['Corrected Typer','','Corrected Typer']))
+  self.assertEqual(rows[1][22],'Reviewed Contributor');self.assertEqual(rows[2][22],'Searcher')
+  self.assertEqual(rows[0][23:27],['Disputed','Our reply','Non-Chargeable','Client reply'])
   # Recollect the edited error's dates: corrections follow the error ID.
   self.add(self.seed('2026-10-01','2026-10-01',first),self.real_build)
-  file,rows=self.book();self.assertEqual(rows[1][23],'Reviewed Contributor')
-  wb=openpyxl.load_workbook(file);self.assertEqual(wb['SP 2'].tables['TitleVisionErrors'].ref,'A1:AC4')
-  self.assertTrue(wb['SP 2'].column_dimensions['AC'].hidden);self.assertEqual(len(wb['Summary']._pivots),4)
+  file,rows=self.book();self.assertEqual(rows[1][22],'Reviewed Contributor')
+  wb=openpyxl.load_workbook(file);self.assertEqual(wb['SP 2'].tables['TitleVisionErrors'].ref,'A1:AB4')
+  self.assertTrue(wb['SP 2'].column_dimensions['AB'].hidden);self.assertEqual(len(wb['Summary']._pivots),4)
   self.assertEqual(wb['Summary']._pivots[0].cache.recordCount,3)
-  self.assertIn('Reviewed Contributor',wb['SP 2']['X3'].value)
+  self.assertIn('Reviewed Contributor',wb['SP 2']['W3'].value)
   fixture=ROOT/'tests/results'/('report-edits-'+uuid.uuid4().hex);fixture.mkdir();shutil.copy2(file,fixture/'report.xlsx')
   print('EDITS_FIXTURE='+str(fixture/'report.xlsx'))
 
@@ -271,7 +278,7 @@ class MonthlySyncTests(unittest.TestCase):
  def test_invalid_upload_and_build_failure_leave_saved_corrections_unchanged(self):
   s=self.source(1,'2026-10-01');self.live=[s];self.add(self.seed('2026-10-01','2026-10-01',[s]),self.real_build)
   cases=[lambda wb:setattr(wb['SP 2']['AC2'],'value','999'),lambda wb:setattr(wb['SP 2']['B2'],'value','Other order'),
-   lambda wb:setattr(wb['SP 2']['W2'],'value','Other team'),lambda wb:setattr(wb['SP 2']['S2'],'value','=1+1'),lambda wb:wb['SP 2'].delete_rows(2)]
+   lambda wb:setattr(wb['SP 2']['D2'],'value','Other team'),lambda wb:setattr(wb['SP 2']['S2'],'value','=1+1'),lambda wb:wb['SP 2'].delete_rows(2)]
   before=self.book()[0]
   for change in cases:
    with self.subTest(change=change):
@@ -285,15 +292,15 @@ class MonthlySyncTests(unittest.TestCase):
  def test_unchanged_and_stale_unedited_copy_keeps_manual_changes(self):
   s=self.source(1,'2026-10-01');self.live=[s];self.add(self.seed('2026-10-01','2026-10-01',[s]),self.real_build)
   untouched=self.book()[0].read_bytes()
-  upload=self.edited_copy(lambda wb:setattr(wb['SP 2']['X2'],'value','Manual final'))
+  upload=self.edited_copy(lambda wb:setattr(wb['SP 2']['W2'],'value','Manual final'))
   manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',upload)
   # Opening an old workbook without edits cannot revert a saved correction.
   result=manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',untouched)
-  self.assertIn('No new',result['message']);self.assertEqual(self.book()[1][0][23],'Manual final')
+  self.assertIn('No new',result['message']);self.assertEqual(self.book()[1][0][22],'Manual final')
   # A changed Team uses the other team's contributor instead of the old override.
-  upload=self.edited_copy(lambda wb:setattr(wb['SP 2']['W2'],'value','Type'))
+  upload=self.edited_copy(lambda wb:setattr(wb['SP 2']['D2'],'value','Type'))
   manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',upload)
-  self.assertEqual(self.book()[1][0][23],'Typer')
+  self.assertEqual(self.book()[1][0][22],'Typer')
 
  def test_older_copy_can_save_nonconflicting_edits_without_dropping_next_day(self):
   first=self.source(1,'2026-10-01');self.live=[first]
@@ -303,7 +310,7 @@ class MonthlySyncTests(unittest.TestCase):
   self.add(self.seed('2026-10-02','2026-10-02',[second]),self.real_build)
   manual_edits.save(ROOT,self.data,self.db,self.real_build,'2026-10',upload)
   rows=self.book()[1];self.assertEqual(len(rows),2)
-  self.assertEqual([r[23] for r in rows],['Reviewed original','Searcher'])
+  self.assertEqual([r[22] for r in rows],['Reviewed original','Searcher'])
   self.assertEqual(self.book()[0].parent.joinpath('payload.json').exists(),True)
 
 if __name__=='__main__':unittest.main()

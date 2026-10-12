@@ -13,10 +13,10 @@ class ReportTests(unittest.TestCase):
     folder=app/'tests/results'/('report-'+scenario+'-'+uuid.uuid4().hex);folder.mkdir(parents=True)
     rows=[]
     for i,team in enumerate(teams):
-     r=['']*28;r[0]='Non-Chargeable';r[1]='Test-'+str(i);r[6]='Test category';r[8]='=Literal source text';r[10]=r[14]=r[15]=46282;r[13]=i+1;r[18]='Example Searcher';r[20]='Example Typer';r[22]=team;r[23]=r[18] if team=='Search' else r[20] if team=='Type' else team;r[24:28]=['Disputed','=Literal vendor comment\nSecond line','Non-Chargeable','Training, reason accepted'];rows.append(r)
+     r=['']*27;r[0]='Non-Chargeable';r[1]='Test-'+str(i);r[6]='Test category';r[8]='=Literal source text';r[10]=r[14]=r[15]=46282;r[13]=i+1;r[18]='Example Searcher';r[20]='Example Typer';r[3]=team;r[22]=r[18] if team=='Search' else r[20] if team=='Type' else team;r[23:27]=['Disputed','=Literal vendor comment\nSecond line','Non-Chargeable','Training, reason accepted'];rows.append(r)
     specs=[]
-    for name,field,title,col,row in [('ErrorsByContributor',23,'Final Error Contributor',0,5),('ErrorsByTeam',22,'Team',4,5),('ErrorsByCategory',6,'Error Category',8,5),('ErrorsByStatus',0,'Status',4,15)]:
-     items=sorted({r[field] for r in rows}|({'VM team'} if field in (22,23) else set()))
+    for name,field,title,col,row in [('ErrorsByContributor',22,'Final Error Contributor',0,5),('ErrorsByTeam',3,'Team',4,5),('ErrorsByCategory',6,'Error Category',8,5),('ErrorsByStatus',0,'Status',4,15)]:
+     items=sorted({r[field] for r in rows}|({'VM team'} if field in (3,22) else set()))
      specs.append(dict(name=name,field=field,title=title,col=col,row=row,items=items,height=len(items)+3))
     # Deliberately omit widths to exercise rebuilding older saved payloads.
     (folder/'payload.json').write_text(json.dumps({'data':[layout['headers'],*rows],'specs':specs,'tableName':'TitleVisionErrors'}),encoding='utf8')
@@ -37,6 +37,7 @@ class ReportTests(unittest.TestCase):
     if rows:
      import openpyxl
      sheet=openpyxl.load_workbook(folder/'report.xlsx')['SP 2']
-     self.assertEqual([sheet.cell(2,c).value for c in range(25,29)],rows[0][24:28]);self.assertEqual(sheet['Z2'].data_type,'s');self.assertTrue(sheet['AB2'].alignment.wrap_text)
+     self.assertEqual([sheet.cell(2,c).value for c in range(24,28)],rows[0][23:27]);self.assertEqual(sheet['Y2'].data_type,'s');self.assertTrue(sheet['AA2'].alignment.wrap_text)
+     self.assertEqual(sheet['D1'].value,'Team');self.assertEqual(sheet['D2'].value,teams[0]);self.assertEqual(sheet['W2'].data_type,'f')
     print('REPORT_FIXTURE='+str(folder/'report.xlsx'))
 if __name__=='__main__':unittest.main()

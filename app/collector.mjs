@@ -137,5 +137,5 @@ try{
  }
  }
  if(exportFailure)throw Error(exportFailure+' Report withheld until the source export can be verified.');
- await fs.writeFile(path.join(dir,'collection.json'),JSON.stringify({start:job.start,end:job.end,...totals,statusHistoryVersion:1,collectedAt:new Date().toISOString(),pages:pageNo},null,2));emit('collected','Collection complete',totals);
+ await fs.writeFile(path.join(dir,'collection.json'),JSON.stringify({start:job.start,end:job.end,...totals,statusHistoryVersion:2,collectedAt:new Date().toISOString(),pages:pageNo},null,2));emit('collected','Collection complete',totals);
 }catch(e){try{await fs.writeFile(path.join(dir,'diagnostic.json'),JSON.stringify({network,text:await activePage?.locator('body').innerText()},null,2));await activePage?.screenshot({path:path.join(dir,'failure.png'),fullPage:true});}catch{}emit('failed',String(e.message).split('\n')[0].replace(/https:\/\/login\.[^\s]+/g,'[login page]'));process.exitCode=1;}finally{await browser?.close();}

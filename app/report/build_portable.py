@@ -28,32 +28,32 @@ def build(folder):
  for j,width in enumerate(widths):sheet.set_column(j,j,width)
  sheet.freeze_panes(1,3);sheet.set_row(0,44)
  # Add the table before writing cells so cached formula values are preserved.
- sheet.add_table(0,0,max(n,1),28 if editable else 27,{'name':payload['tableName'],'style':None,'columns':[{'header':h,'header_format':header} for h in [*headers,*(['TitleVision Error ID'] if editable else [])]]})
- if editable:sheet.set_column(28,28,18,None,{'hidden':True})
- for i,row in enumerate(rows or [[None]*28],1):
+ sheet.add_table(0,0,max(n,1),27 if editable else 26,{'name':payload['tableName'],'style':None,'columns':[{'header':h,'header_format':header} for h in [*headers,*(['TitleVision Error ID'] if editable else [])]]})
+ if editable:sheet.set_column(27,27,18,None,{'hidden':True})
+ for i,row in enumerate(rows or [[None]*27],1):
   maxlines=1
   for j,value in enumerate(row):
    opts=dict(border)
    if i%2:opts['bg_color']='#EDF2F7'
-   if j in (7,8,25,27):opts['valign']='top'
+   if j in (7,8,24,26):opts['valign']='top'
    if j in (10,14,15):opts['num_format']='m/d/yyyy h:mm:ss AM/PM' if j==10 else 'm/d/yyyy'
    if j==13:opts.update(num_format='0',align='right')
-   if j==22:opts.update(bg_color='#FFF2CC',align='center')
+   if j==3:opts.update(bg_color='#FFF2CC',align='center')
    cellformat=fmt(**opts)
-   if j==23:
+   if j==22:
     r=i+1
-    formula=f'=IF(TRIM(W{r})="Triage","Triage",IF(TRIM(W{r})="VM team","VM team",IF(TRIM(W{r})="Search",IF(S{r}="","",S{r}),IF(OR(TRIM(W{r})="Type",TRIM(W{r})="Typing"),IF(U{r}="","",U{r}),""))))'
+    formula=f'=IF(TRIM(D{r})="Triage","Triage",IF(TRIM(D{r})="VM team","VM team",IF(TRIM(D{r})="Search",IF(S{r}="","",S{r}),IF(OR(TRIM(D{r})="Type",TRIM(D{r})="Typing"),IF(U{r}="","",U{r}),""))))'
     override=(payload.get('contributorOverrides') or [None]*n)[i-1] if n else None
     if override:
      team=override['team'].replace('"','""');name=override['name'].replace('"','""')
-     formula=f'=IF(TRIM(W{r})="{team}","{name}",{formula[1:]})'
+     formula=f'=IF(TRIM(D{r})="{team}","{name}",{formula[1:]})'
     code=sheet.write_formula(i,j,formula,cellformat,value or '')
    else:code=sheet.write(i,j,value,cellformat)
    if code:raise ValueError('Excel cell write failed; report withheld')
    maxlines=max(maxlines,sum(max(1,math.ceil(len(part)/max(1,widths[j]*0.85))) for part in str(value or '').split('\n')))
   sheet.set_row(i,min(409,max(52,maxlines*14+12)))
-  if editable and i<=n:sheet.write_string(i,28,payload['editIds'][i-1])
- sheet.data_validation(1,22,max(n,1),22,{'validate':'list','source':['Search','Type','Triage','VM team'],'error_type':'stop','error_title':'Choose a team','error_message':'Select Search, Type, Triage or VM team.'})
+  if editable and i<=n:sheet.write_string(i,27,payload['editIds'][i-1])
+ sheet.data_validation(1,3,max(n,1),3,{'validate':'list','source':['Search','Type','Triage','VM team'],'error_type':'stop','error_title':'Choose a team','error_message':'Select Search, Type, Triage or VM team.'})
  summary.set_default_row(25)
  for j,width in enumerate([25,14,15,4,23,14,15,4,23,14,15]):summary.set_column(j,j,width)
  heading='TitleVision Error Report — '+title
