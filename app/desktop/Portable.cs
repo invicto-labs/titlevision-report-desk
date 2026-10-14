@@ -11,6 +11,109 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using Microsoft.Win32;
+
+static class Installation {
+ internal const string Key=@"Software\Microsoft\Windows\CurrentVersion\Uninstall\TitleVisionReportDesk";
+ internal static string Root {get{return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),@"Programs\TitleVision Report Desk");}}
+ internal static string Data {get{return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),@"TitleVision Report Desk\data");}}
+ internal static bool Inside(string path,string root){return Path.GetFullPath(path).StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);}
+ internal static void Register(string target){
+  if(!Inside(target,Path.Combine(Root,"versions")))throw new Exception("Unexpected installation location.");
+  string uninstaller=Path.Combine(Root,"Uninstall.exe");
+  File.Copy(Path.Combine(target,"TitleVision Report Desk.exe"),uninstaller,true);
+  RegisterKey(Key,Root,uninstaller,Path.Combine(target,"TitleVision Report Desk.exe"),Portable.Version);
+ }
+ internal static void RegisterKey(string key,string root,string uninstall,string icon,string version){
+  using(var entry=Registry.CurrentUser.CreateSubKey(key)){
+   entry.SetValue("DisplayName",Portable.Name);entry.SetValue("DisplayVersion",version);
+   entry.SetValue("Publisher","Invicto Labs");entry.SetValue("InstallLocation",root);
+   entry.SetValue("DisplayIcon",icon+",0");entry.SetValue("UninstallString","\""+uninstall+"\" --uninstall");
+   entry.SetValue("NoModify",1,RegistryValueKind.DWord);entry.SetValue("NoRepair",1,RegistryValueKind.DWord);
+  }
+ }
+ internal static void Begin(){
+  string helper=Path.Combine(Path.GetTempPath(),"TitleVision-Uninstall-"+Guid.NewGuid().ToString("N")+".exe");
+  File.Copy(Application.ExecutablePath,helper);
+  Process.Start(new ProcessStartInfo(helper,"--uninstall-worker"){UseShellExecute=false});
+ }
+ internal static void ValidateTree(string candidate,string expected){
+  string full=Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar);
+  if(!String.Equals(full,Path.GetFullPath(expected).TrimEnd(Path.DirectorySeparatorChar),StringComparison.OrdinalIgnoreCase) || full.Length<10)
+   throw new Exception("Uninstall folder validation failed.");
+  for(var parent=new DirectoryInfo(full);parent!=null;parent=parent.Parent)
+   if(parent.Exists && (parent.Attributes&FileAttributes.ReparsePoint)!=0)throw new Exception("Uninstall cannot follow a linked folder: "+parent.FullName);
+  CheckTree(full);
+ }
+ static void CheckTree(string folder){
+  if(!Directory.Exists(folder))return;
+  foreach(var entry in new DirectoryInfo(folder).GetFileSystemInfos()){
+   if((entry.Attributes&FileAttributes.ReparsePoint)!=0)throw new Exception("Uninstall cannot follow a linked file or folder: "+entry.FullName);
+   if((entry.Attributes&FileAttributes.Directory)!=0)CheckTree(entry.FullName);
+  }
+ }
+ internal static void RemoveFiles(string candidate,string expected){
+  ValidateTree(candidate,expected);if(Directory.Exists(candidate))Directory.Delete(Path.GetFullPath(candidate),true);
+ }
+ static void RemoveSchedule(){
+  string ps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),@"WindowsPowerShell\v1.0\powershell.exe");
+  var start=new ProcessStartInfo(ps,"-NoProfile -NonInteractive -Command \"$ErrorActionPreference='Stop'; $t=Get-ScheduledTask -TaskName 'TitleVision Report Desk - Daily' -ErrorAction SilentlyContinue; if($t){$t | Unregister-ScheduledTask -Confirm:$false}\"");
+  start.UseShellExecute=false;start.CreateNoWindow=true;start.RedirectStandardError=true;
+  using(var p=Process.Start(start)){string error=p.StandardError.ReadToEnd();p.WaitForExit();if(p.ExitCode!=0)throw new Exception("Windows could not remove the report schedule. "+error);}
+ }
+ static void StopOwnedEngines(){
+  foreach(var process in Process.GetProcesses())using(process){
+   string path;
+   try{path=process.MainModule.FileName;}catch{continue;}
+   if(Inside(path,Root)){
+    try{process.Kill();if(!process.WaitForExit(15000))throw new Exception("Report Desk did not stop.");}
+    catch(InvalidOperationException){} // Process already exited.
+   }
+  }
+ }
+ static void RemoveShortcut(string file){
+  if(!File.Exists(file))return;
+  var type=Type.GetTypeFromProgID("WScript.Shell");object shell=Activator.CreateInstance(type),link=null;
+  try{
+   link=type.InvokeMember("CreateShortcut",BindingFlags.InvokeMethod,null,shell,new object[]{file});
+   string target=Convert.ToString(link.GetType().InvokeMember("TargetPath",BindingFlags.GetProperty,null,link,null));
+   if(!String.IsNullOrEmpty(target) && Inside(target,Root))File.Delete(file);
+  }finally{if(link!=null)System.Runtime.InteropServices.Marshal.FinalReleaseComObject(link);System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);}
+ }
+ internal static FileStream LockWorker(string path){
+  var stream=new FileStream(path,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.ReadWrite);
+  try{stream.Lock(0,1);return stream;}catch{stream.Dispose();throw new IOException("A report, status refresh or update is still running. Let it finish, then uninstall again. No reports were removed.");}
+ }
+ internal static void Remove(){
+  if(Inside(Application.ExecutablePath,Root))throw new Exception("Run Uninstall.exe again to start the separate uninstaller.");
+  if(MessageBox.Show("Uninstall TitleVision Report Desk?\n\nThe app and its daily schedule will be removed. Your local reports, saved settings and shared Excel files will be kept.",Portable.Name,MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
+  ValidateTree(Root,Root);Directory.CreateDirectory(Data);
+  using(var gate=new Mutex(false,@"Local\TitleVisionReportDeskStart")){
+   bool owned=false;
+   try{
+    try{owned=gate.WaitOne(45000);}catch(AbandonedMutexException){owned=true;}
+    if(!owned)throw new Exception("Report Desk is starting. Try uninstalling again shortly.");
+    using(var reportLock=LockWorker(Path.Combine(Data,"worker.lock"))){
+     try{
+      var updateFile=Path.Combine(Data,"update-status.json");
+      if(File.Exists(updateFile)){
+       var status=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(updateFile));
+       string phase=status.ContainsKey("phase")?Convert.ToString(status["phase"]):"";
+       double stamp=status.ContainsKey("time")?Convert.ToDouble(status["time"]):0;
+       if((phase=="downloading"||phase=="waiting"||phase=="installing") && (DateTime.UtcNow-new DateTime(1970,1,1)).TotalSeconds-stamp<1800)
+        throw new Exception("An update is in progress. Cancel a queued update or let it finish before uninstalling.");
+      }
+      RemoveSchedule();StopOwnedEngines();
+      RemoveShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),"TitleVision Report Desk.lnk"));
+      RemoveShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),"TitleVision Report Desk.lnk"));
+      RemoveFiles(Root,Root);Registry.CurrentUser.DeleteSubKeyTree(Key,false);
+     }finally{reportLock.Unlock(0,1);}
+    }
+   }finally{if(owned)gate.ReleaseMutex();}
+  }
+  MessageBox.Show("TitleVision Report Desk was uninstalled. Your reports and settings were kept.",Portable.Name,MessageBoxButtons.OK,MessageBoxIcon.Information);
+ }
+}
 
 static partial class Portable {
  internal const string Name="TitleVision Report Desk";
@@ -48,10 +151,10 @@ static partial class Portable {
    foreach(var endpoint in System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners())
     if(endpoint.Port==port && (IPAddress.IsLoopback(endpoint.Address) || endpoint.Address.Equals(IPAddress.Any) || endpoint.Address.Equals(IPAddress.IPv6Any))) {listening=true;break;}
    if(!listening)return 0;
-   var req=(HttpWebRequest)WebRequest.Create("http://127.0.0.1:"+port+"/api/state");req.Proxy=null;req.Timeout=1200;req.ReadWriteTimeout=1200;
+   var req=(HttpWebRequest)WebRequest.Create("http://127.0.0.1:"+port+"/api/health");req.Proxy=null;req.Timeout=3000;req.ReadWriteTimeout=3000;
    using(var response=req.GetResponse())using(var reader=new StreamReader(response.GetResponseStream())) {
     var state=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(reader.ReadToEnd());
-    return state.ContainsKey("edition") && Convert.ToString(state["edition"])=="portable-1" && state.ContainsKey("csrf")?1:2;
+    return state.ContainsKey("edition") && Convert.ToString(state["edition"])=="portable-1" && state.ContainsKey("ready") && Convert.ToBoolean(state["ready"])?1:2;
    }
   } catch(WebException e) { return e.Status==WebExceptionStatus.ConnectFailure?0:2; } catch {return 2;}
  }
@@ -177,6 +280,7 @@ sealed class Setup:Form {
   string exe=Path.Combine(target,"TitleVision Report Desk.exe");
   Portable.Shortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),"TitleVision Report Desk.lnk"),exe);
   if(desktop)Portable.Shortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),"TitleVision Report Desk.lnk"),exe);
+  Installation.Register(target);
  }
  async void Install(object sender,EventArgs args) {
   install.Enabled=false;busy=true;status.Text="Extracting application files…";
@@ -197,10 +301,12 @@ static class Program {
  [STAThread]static int Main(string[] args) {
   Application.EnableVisualStyles();
   try {
+   if(args.Length==1 && args[0]=="--uninstall"){Installation.Begin();return 0;}
+   if(args.Length==1 && args[0]=="--uninstall-worker"){Installation.Remove();return 0;}
    if(args.Length==1 && args[0]=="--check-files"){Portable.Prerequisites();Portable.ValidateFiles(Portable.Root);return 0;}
    if(args.Length==2 && args[0]=="--test-health")return Portable.Health(int.Parse(args[1]));
    Portable.Launch(args.Length!=1 || args[0]!="--start-only");return 0;
-  }catch(Exception e){if(args.Length>0)File.WriteAllText(Path.Combine(Environment.CurrentDirectory,"launcher-error.txt"),e.ToString());else MessageBox.Show(e.Message,Portable.Name,MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;}
+  }catch(Exception e){if(args.Length>0 && !args[0].StartsWith("--uninstall"))File.WriteAllText(Path.Combine(Environment.CurrentDirectory,"launcher-error.txt"),e.ToString());else MessageBox.Show(e.Message,Portable.Name,MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;}
  }
 }
 #endif

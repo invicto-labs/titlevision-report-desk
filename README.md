@@ -1,5 +1,19 @@
 # TitleVision Report Desk
 
+## Error overview
+
+The home screen shows Search, Typing, VM Team, Leadership and Triage error counts
+and error points with overall totals for the selected month. A second table shows
+the same breakdown for the latest Created Date with errors in that workbook, with
+the date clearly displayed. An empty workbook has no latest error date. Both
+tables use the same saved Excel snapshot. It reads every populated error row directly
+from the saved SP 2 sheet, including repeated orders and zero-point errors, and
+checks for saved changes every 15 seconds. Blank or unknown teams appear as
+Unassigned or Other so the total still matches Excel. Unsaved Excel changes cannot
+appear until the workbook is saved. A missing or invalid shared workbook shows an
+unavailable message; it does not substitute a local copy. Collection, monthly
+workbooks, report history and settings remain available in expandable sections.
+
 ## Shared team workbook
 
 One designated Windows PC runs collection and keeps its SQLite database,
@@ -22,6 +36,17 @@ VM team attribution, bordered Excel reports and native PivotTables. Routine runs
 make no AI calls. Windows must remain awake, online and signed in for scheduled runs.
 
 ## Install and update
+
+Installed copies appear in Windows **Settings > Apps > Installed apps** as
+TitleVision Report Desk, with their running release version. Uninstall removes
+the managed app versions, shortcuts and scheduled task; local report data/settings
+and shared Excel files are retained. An active report or update must finish first.
+
+**Get update** works while the app is open. If a report or monthly refresh is
+active, the verified update waits until it finishes, then restarts the app.
+The waiting update can be cancelled. The app displays worker activity and blocks
+new report operations while an update is queued. Closing the browser window does
+not stop the background report engine.
 
 Download `TitleVision-Report-Desk-Setup.exe` from this repository's latest release.
 Requires Windows 10/11 x64 and Microsoft Edge. Python/Node and report libraries are
@@ -119,7 +144,7 @@ again. Copies on another PC use that PC's own local application data.
 
 The **Application updates** panel shows the running version. **Get update** checks
 the latest stable GitHub release, verifies GitHub's SHA-256 digest, installs it and
-restarts the app. It refuses updates while a report is active. Settings, encrypted
+restarts the app after any active report or workbook refresh finishes. Settings, encrypted
 credentials, private display-name mappings and reports are stored separately from
 versioned application files. Activation keeps the previous version for rollback.
 Activation failures show the specific reason. Each attempt saves its result, and

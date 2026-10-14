@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from contextlib import contextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from updater import Updates
-import main_workbook,monthly_sync,manual_edits,name_mapping,shared_workbook
+import main_workbook,monthly_sync,manual_edits,name_mapping,shared_workbook,dashboard
 ROOT=Path(__file__).resolve().parent
 PORTABLE=(ROOT/'portable.json').exists()
 DATA=Path(os.environ.get('TITLEVISION_DATA',Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'TitleVision Report Desk/data' if PORTABLE else ROOT/'data')).resolve();DATA.mkdir(parents=True,exist_ok=True)
@@ -73,21 +73,27 @@ def credentials():
 def store_credentials(username,password):
  if not username or not password:raise ValueError('Username and password are required.')
  p=DATA/'credentials.dpapi';temp=p.with_suffix('.tmp');temp.write_bytes(dpapi(json.dumps({'username':username,'password':password}).encode()));temp.replace(p)
-UPDATES=Updates(ROOT,DATA,dpapi)
+UPDATES=Updates(ROOT,DATA,dpapi,lambda:worker_busy())
 def update(rid,**values):
  with db() as c:c.execute('UPDATE runs SET '+','.join(k+'=?' for k in values)+' WHERE id=?',(*values.values(),rid))
 class RunLock:
  def __enter__(self):
-  self.file=open(DATA/'worker.lock','a+b');self.file.seek(0);self.file.write(b'0');self.file.flush();self.file.seek(0)
+  self.file=open(DATA/'worker.lock','a+b');self.file.seek(0)
   try:
    if os.name=='nt':
     import msvcrt;msvcrt.locking(self.file.fileno(),msvcrt.LK_NBLCK,1)
    else:
     import fcntl;fcntl.flock(self.file,fcntl.LOCK_EX|fcntl.LOCK_NB)
-  except OSError:self.file.close();raise ValueError('Another report is already running.')
+  except OSError:self.file.close();raise ValueError('A report or workbook refresh is already running. Wait for it to finish.')
   return self
  def __exit__(self,*args):self.file.close()
+
+def worker_busy():
+ try:
+  with RunLock():return False
+ except (ValueError,OSError):return True
 def date_range(start,end):
+ if not isinstance(start,str) or not isinstance(end,str):raise ValueError('Choose valid From and Through dates.')
  a=date.fromisoformat(start);b=date.fromisoformat(end)
  if a>b or (b-a).days>30:raise ValueError('Choose a date range of 1 to 31 days.')
  if b>=datetime.now(IST).date():raise ValueError('Select a completed day, up to yesterday.')
@@ -190,6 +196,7 @@ def perform(rid,lock):
 
 def fetch_month(start,end,folder,rid=None):
  def progress(event):
+  if event.get('message'):monthly_sync.state(db,start[:7],'running',event['message'])
   if rid and event.get('message'):update(rid,message='Month-to-date refresh: '+event['message'])
  run_process([NODE,ROOT/'collector.mjs'],folder,dict(credentials(),start=start,end=end,directory=str(folder),exportOnly=True),progress)
  run_process([sys.executable,ROOT/'reconcile.py',folder],folder)
@@ -198,6 +205,7 @@ def launch_run(start,end,scheduled_day=None,background=True):
  start,end=date_range(start,end);credentials();lock=RunLock();lock.__enter__()
  try:
   # Any running record left while the process lock is free was interrupted.
+  if UPDATES.busy():raise ValueError('An application update is queued or in progress. Run the report after it finishes.')
   with db() as c:
    c.execute("UPDATE runs SET status='failed',message='Application stopped during this run. Run the date again.' WHERE status IN ('running','queued')")
    c.execute("DELETE FROM main_auto_pending WHERE run_id IN (SELECT id FROM runs WHERE status='failed')")
@@ -247,7 +255,9 @@ def public_state():
   verified=bool(c.execute("SELECT 1 FROM runs WHERE status IN ('complete','review') LIMIT 1").fetchone())
   main_books=main_workbook.books(c)
  with db() as c:syncs=[dict(r) for r in c.execute('SELECT * FROM main_sync_state ORDER BY month DESC')]
- return {'runs':runs,'mainBooks':main_books,'mainSyncs':syncs,'sharedFolder':shared_workbook.configured(db),'phase2':{'enabled':monthly_sync.active(),'starts':monthly_sync.START.isoformat(),'currentMonth':monthly_sync.today().strftime('%Y-%m')},'nameMapping':name_mapping.summary(DATA),'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
+ busy=worker_busy()
+ message=next((r['message'] for r in runs if r['status'] in ('queued','running')),None) or next((s['message'] for s in syncs if s['status']=='running'),None) or 'A workbook operation is in progress.'
+ return {'activity':{'busy':busy,'message':message if busy else ''},'runs':runs,'mainBooks':main_books,'mainSyncs':syncs,'sharedFolder':shared_workbook.configured(db),'phase2':{'enabled':monthly_sync.active(),'starts':monthly_sync.START.isoformat(),'currentMonth':monthly_sync.today().strftime('%Y-%m')},'nameMapping':name_mapping.summary(DATA),'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
 def downloadable_report(folder):
  def ready(directory):
   try:
@@ -281,6 +291,17 @@ class Handler(BaseHTTPRequestHandler):
    self.guard();p=urlparse(self.path).path
    if p=='/api/health':return self.send(200,{'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'processId':os.getpid(),'ready':True})
    if p=='/api/state':return self.send(200,public_state())
+   if p.startswith('/api/main/') and p.endswith('/summary'):
+    chunks=p.split('/')
+    if len(chunks)!=5:raise ValueError('Invalid workbook URL')
+    return self.send(200,dashboard.summary(DATA,db,chunks[3]))
+   if p.startswith('/api/main/') and p.endswith('/current'):
+    chunks=p.split('/')
+    if len(chunks)!=5:raise ValueError('Invalid workbook URL')
+    file,_=dashboard.workbook_path(DATA,db,chunks[3]);payload,_=dashboard.read_file(file)
+    try:dashboard.parse(payload)
+    except Exception as error:raise ValueError('Cannot download the saved workbook. Check the Excel file and try again.') from error
+    self.send_response(200);self.send_header('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');self.send_header('Content-Disposition',f'attachment; filename="TitleVision Main Error Report - {chunks[3]}.xlsx"');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(payload);return
    if p.startswith('/api/main/') and p.endswith('/download'):
     chunks=p.split('/')
     if len(chunks)!=5:raise ValueError('Invalid workbook URL')
@@ -289,6 +310,7 @@ class Handler(BaseHTTPRequestHandler):
     payload=file.read_bytes();self.send_response(200);self.send_header('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');self.send_header('Content-Disposition',f'attachment; filename="TitleVision Main Error Report - {month}.xlsx"');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(payload);return
    if p.startswith('/api/runs/'):
     chunks=p.split('/');rid=chunks[3]
+    if len(chunks)!=4 and not (len(chunks)==5 and chunks[4]=='download'):return self.send(404,{'error':'Not found'})
     if len(rid)!=32 or any(c not in '0123456789abcdef' for c in rid):raise ValueError('Invalid report')
     with db() as c:r=c.execute('SELECT * FROM runs WHERE id=?',(rid,)).fetchone()
     if not r:raise ValueError('Report not found')
@@ -302,7 +324,7 @@ class Handler(BaseHTTPRequestHandler):
    if p not in files:return self.send(404,{'error':'Not found'})
    kind={'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/favicon.svg':'image/svg+xml'}[p]
    self.send(200,(ROOT/'public'/files[p]).read_bytes(),kind)
-  except (ValueError,OSError) as e:self.send(400,{'error':str(e)})
+  except (ValueError,OSError,sqlite3.Error) as e:self.send(400,{'error':str(e)})
  def do_POST(self):
   try:
    self.guard(True);length=int(self.headers.get('Content-Length','0'))
@@ -326,6 +348,7 @@ class Handler(BaseHTTPRequestHandler):
     return self.send(200,result)
    if length<=0 or length>8192:raise ValueError('Request too large')
    obj=json.loads(self.rfile.read(length))
+   if not isinstance(obj,dict):raise ValueError('Request must be a JSON object.')
    if p=='/api/shared/configure':
     with RunLock():
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
@@ -377,11 +400,22 @@ class Handler(BaseHTTPRequestHandler):
    if p=='/api/run':return self.send(202,{'id':launch_run(obj['start'],obj['end'])})
    if p=='/api/update/check':return self.send(200,UPDATES.check())
    if p=='/api/update/install':
-    with RunLock():return self.send(202,UPDATES.install())
-   if p=='/api/update/token':UPDATES.save_token(obj.get('token','').strip());return self.send(200,{'saved':bool(obj.get('token'))})
-   if p=='/api/credentials':store_credentials(obj['username'].strip(),obj['password']);return self.send(200,{'saved':True})
+    return self.send(202,UPDATES.install())
+   if p=='/api/update/cancel':return self.send(200,UPDATES.cancel())
+   if p=='/api/update/token':
+    token=obj.get('token','')
+    if not isinstance(token,str):raise ValueError('GitHub token must be text.')
+    UPDATES.save_token(token.strip());return self.send(200,{'saved':bool(token.strip())})
+   if p=='/api/credentials':
+    username,password=obj.get('username'),obj.get('password')
+    if not isinstance(username,str) or not isinstance(password,str) or not username.strip() or not password:raise ValueError('Enter both username and password as text.')
+    with RunLock():
+     if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
+     store_credentials(username.strip(),password)
+    return self.send(200,{'saved':True})
    if p=='/api/schedule':
     if type(obj.get('enabled')) is not bool:raise ValueError('Invalid schedule option')
+    if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
     if obj['enabled']:credentials()
     install_schedule(obj['enabled']);return self.send(200,{'enabled':obj['enabled']})
    return self.send(404,{'error':'Not found'})

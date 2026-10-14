@@ -1,3 +1,21 @@
+## Version 1.4.14
+
+- Register installed copies in Windows Installed apps with the current version and an uninstaller. Uninstall stops idle managed engines, removes the schedule and installed versions, and preserves local report data, settings and shared workbooks. Refuse removal while a report/update is active or installed paths contain links.
+- Allow Get update while the app is open or a report/monthly refresh is active. Download and verify the installer, show a waiting state, then activate after work finishes. Offer cancellation while queued and prevent new work from racing activation.
+- Report actual worker activity, including monthly refresh progress, in the dashboard. Reject malformed JSON bodies, invalid field types and unknown report subroutes with proper error responses.
+
+## Version 1.4.13
+
+- Add Error points by team and an overall points total beside the monthly error counts, read directly from the saved SP 2 workbook.
+- Add a Latest date summary for the newest Created Date with error records in the selected month, including each team's errors and points and the daily totals. Both tables refresh from the same saved Excel snapshot every 15 seconds.
+- Validate points and dates before displaying totals; retain zero-point and repeated-order errors.
+
+## Version 1.4.12
+
+- Simplify the home screen to a monthly table of Search, Typing, VM Team, Leadership and Triage errors, with a matching total. Keep collection, history and settings in expandable sections.
+- Read counts directly from the saved SP 2 sheet in the shared Main workbook and check for changes every 15 seconds. Include every error row, including repeated orders and zero-point errors. Show Unassigned or Other when needed to keep totals complete.
+- Download the current shared Excel copy directly from the overview. If that workbook is unavailable or invalid, show a warning without substituting stale counts or a different file.
+
 ## Version 1.4.11
 
 - Match the approved Excel reference: SP 2 with 27 columns, compact bordered rows, orange headers, and native Names, Status, Team and Points PivotTables. Exclude RVSI.

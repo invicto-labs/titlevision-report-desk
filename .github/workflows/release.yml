@@ -48,6 +48,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Updater tests failed' }
           python app/tests/test_activation.py
           if ($LASTEXITCODE -ne 0) { throw 'Activation tests failed' }
+          python app/tests/test_installation.py
+          if ($LASTEXITCODE -ne 0) { throw 'Install and uninstall safety tests failed' }
           python app/tests/test_report.py
           if ($LASTEXITCODE -ne 0) { throw 'Workbook tests failed' }
           python app/tests/test_reconcile.py
@@ -58,6 +60,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Main workbook continuity tests failed' }
           python app/tests/test_shared_workbook.py
           if ($LASTEXITCODE -ne 0) { throw 'Shared workbook safety tests failed' }
+          python app/tests/test_dashboard.py
+          if ($LASTEXITCODE -ne 0) { throw 'Excel dashboard tests failed' }
           python app/tests/test_monthly_sync.py
           if ($LASTEXITCODE -ne 0) { throw 'Monthly status refresh tests failed' }
           python app/tests/test_name_mapping.py

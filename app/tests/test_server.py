@@ -12,10 +12,94 @@ class ServerTests(unittest.TestCase):
  def tearDownClass(cls):cls.http.shutdown();cls.http.server_close()
  def test_credential_roundtrip(self):
   server.store_credentials('test-user','test-only-password');self.assertEqual(server.credentials()['username'],'test-user');self.assertNotIn(b'test-only-password',(server.DATA/'credentials.dpapi').read_bytes());self.assertNotIn('password',json.dumps(server.public_state()))
+ def test_team_summary_endpoint_reads_workbook_without_mutation(self):
+  with patch.object(server.dashboard,'summary',return_value={'available':True,'total':7,'rows':[]}) as summary:
+   with urllib.request.urlopen(self.url+'/api/main/2026-10/summary') as response:self.assertEqual(json.load(response)['total'],7)
+   self.assertEqual(summary.call_args.args,(server.DATA,server.db,'2026-10'))
  def test_health_is_independent_of_report_database(self):
   with patch.object(server,'db',side_effect=RuntimeError('database busy')):
    with urllib.request.urlopen(self.url+'/api/health') as response:value=json.load(response)
   self.assertTrue(value['ready']);self.assertEqual(value['processId'],os.getpid());self.assertNotIn('csrf',value)
+ def post(self,path,body):
+  request=urllib.request.Request(self.url+path,json.dumps(body).encode(),headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN,'Content-Type':'application/json'})
+  return urllib.request.urlopen(request)
+ def test_every_json_mutation_rejects_wrong_body_shape_and_cross_origin(self):
+  paths=['/api/run','/api/credentials','/api/schedule','/api/shared/configure','/api/shared/sync','/api/main/create','/api/main/delete','/api/main/refresh','/api/update/check','/api/update/install','/api/update/cancel','/api/update/token','/api/runs/'+'a'*32+'/main']
+  for path in paths:
+   with self.subTest(path=path):
+    for body in (None,[],1,'text'):
+     with self.assertRaises(urllib.error.HTTPError) as error:self.post(path,body)
+     self.assertEqual(error.exception.code,400);self.assertIn('JSON object',json.load(error.exception)['error'])
+    req=urllib.request.Request(self.url+path,b'{}',headers={'Origin':'https://example.com','X-CSRF-Token':server.TOKEN})
+    with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(req)
+    self.assertEqual(error.exception.code,400)
+ def test_invalid_field_types_return_json_errors(self):
+  for path,body in [('/api/credentials',{'username':123,'password':'x'}),('/api/credentials',{'username':'x','password':[]}),('/api/update/token',{'token':1}),('/api/run',{'start':None,'end':[]} ),('/api/schedule',{'enabled':'yes'})]:
+   with self.assertRaises(urllib.error.HTTPError) as error:self.post(path,body)
+   self.assertEqual(error.exception.code,400);self.assertIn('error',json.load(error.exception))
+ def test_update_endpoints_work_while_monthly_refresh_holds_worker_lock(self):
+  with server.RunLock(),patch.object(server.UPDATES,'install',return_value={'available':True}) as install,patch.object(server.UPDATES,'cancel',return_value={'message':'Cancelled'}) as cancel:
+   with self.post('/api/update/install',{}) as response:self.assertEqual(response.status,202)
+   with self.post('/api/update/cancel',{}) as response:self.assertEqual(response.status,200)
+   install.assert_called_once();cancel.assert_called_once()
+ def test_worker_activity_covers_refresh_without_daily_run(self):
+  self.assertFalse(server.worker_busy())
+  with server.RunLock():self.assertTrue(server.public_state()['activity']['busy'])
+  self.assertFalse(server.public_state()['activity']['busy'])
+ def test_static_health_state_and_unknown_routes(self):
+  for path in ('/','/app.js','/style.css','/favicon.svg','/api/health','/api/state'):
+   with urllib.request.urlopen(self.url+path) as response:self.assertEqual(response.status,200);self.assertEqual(response.headers['Cache-Control'],'no-store')
+  for path in ('/unknown','/api/runs/'+'a'*32+'/unknown','/api/runs/'+'a'*32+'/download/extra'):
+   with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(self.url+path)
+   self.assertEqual(error.exception.code,404)
+ def test_settings_and_control_routes_dispatch_in_isolated_data(self):
+  with patch.object(server,'launch_run',return_value='test-id') as launch:
+   with self.post('/api/run',{'start':'2026-10-01','end':'2026-10-01'}) as response:self.assertEqual(json.load(response)['id'],'test-id')
+  with patch.object(server,'store_credentials') as store:
+   with self.post('/api/credentials',{'username':' test ','password':'test-secret'}) as response:self.assertTrue(json.load(response)['saved'])
+   store.assert_called_once_with('test','test-secret')
+  with patch.object(server,'install_schedule') as schedule:
+   with self.post('/api/schedule',{'enabled':False}) as response:self.assertFalse(json.load(response)['enabled'])
+   schedule.assert_called_once_with(False)
+  with patch.object(server.UPDATES,'check',return_value={'available':False}),patch.object(server.UPDATES,'save_token') as token:
+   with self.post('/api/update/check',{}) as response:self.assertFalse(json.load(response)['available'])
+   with self.post('/api/update/token',{'token':' test '}) as response:self.assertTrue(json.load(response)['saved'])
+   token.assert_called_once_with('test')
+ def test_monthly_routes_and_shared_sync_dispatch_without_live_collection(self):
+  month='2026-08'
+  with patch.object(server.monthly_sync,'create',return_value={'message':'created'}),patch.object(server.monthly_sync,'delete',return_value={'message':'deleted'}),patch.object(server.monthly_sync,'refresh') as refresh,patch.object(server,'pull_shared'),patch.object(server,'publish_shared'),patch.object(server.shared_workbook,'configured',return_value=''):
+   with self.post('/api/main/create',{'month':month}) as response:self.assertEqual(json.load(response)['message'],'created')
+   with self.post('/api/main/delete',{'month':month,'confirm':True}) as response:self.assertEqual(json.load(response)['message'],'deleted')
+   with server.db() as c:c.execute('INSERT INTO main_books VALUES (?,?,?,?,?,?,?,?)',(month,'fixture','2026-08-01','2026-08-01',0,0,1,'now'))
+   try:
+    with self.post('/api/main/refresh',{'month':month}) as response:self.assertEqual(response.status,200)
+    self.assertEqual(refresh.call_args.args[-1],month)
+   finally:
+    with server.db() as c:c.execute('DELETE FROM main_books WHERE month=?',(month,))
+  with patch.object(server.shared_workbook,'configured',return_value='test-share'),patch.object(server.shared_workbook,'sync') as sync:
+   with self.post('/api/shared/sync',{}) as response:self.assertIn('Synchronized',json.load(response)['message'])
+   sync.assert_called_once()
+ def test_completed_run_details_and_excel_download(self):
+  rid=uuid.uuid4().hex;folder=server.DATA/'runs'/rid;folder.mkdir(parents=True)
+  (folder/'issues.json').write_text('[]');file=folder/'report.xlsx';file.write_bytes(b'verified workbook')
+  with server.db() as c:c.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,'2026-08-01','2026-08-01','complete','done','now',1,3,0,None))
+  try:
+   with urllib.request.urlopen(self.url+'/api/runs/'+rid) as response:self.assertEqual(json.load(response)['run']['id'],rid)
+   with patch.object(server,'downloadable_report',return_value=file):
+    with urllib.request.urlopen(self.url+'/api/runs/'+rid+'/download') as response:self.assertEqual(response.read(),b'verified workbook')
+  finally:
+   with server.db() as c:c.execute('DELETE FROM runs WHERE id=?',(rid,))
+ def test_current_excel_download_returns_exact_bytes_and_rejects_corruption(self):
+  with patch.object(server.dashboard,'workbook_path',return_value=(Path('shared.xlsx'),'shared')),patch.object(server.dashboard,'read_file',return_value=(b'exact workbook bytes',None)),patch.object(server.dashboard,'parse') as parse:
+   with urllib.request.urlopen(self.url+'/api/main/2026-10/current') as response:
+    self.assertEqual(response.read(),b'exact workbook bytes')
+    self.assertIn('2026-10.xlsx',response.headers['Content-Disposition'])
+   parse.assert_called_once_with(b'exact workbook bytes')
+   from zipfile import BadZipFile
+   parse.side_effect=BadZipFile('invalid ZIP')
+   with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(self.url+'/api/main/2026-10/current')
+   self.assertEqual(error.exception.code,400)
+   self.assertIn('Cannot download',json.load(error.exception)['error'])
  def test_windows_exclusive_listener_prevents_duplicate_engine(self):
   if os.name!='nt':self.skipTest('Windows socket ownership')
   with self.assertRaises(OSError):server.ThreadingHTTPServer(('127.0.0.1',server.PORT),server.Handler)

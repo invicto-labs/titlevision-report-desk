@@ -46,6 +46,24 @@ class UpdateTests(unittest.TestCase):
    self.up.download(release);args=execute.call_args.args[0];self.assertEqual(args[1],'--apply-update');self.assertEqual(args[-1],'1.3.0')
   self.assertEqual(self.up.status()['phase'],'installing')
  def test_busy_flag(self):self.up.write('downloading','test');self.assertTrue(self.up.busy())
+ def test_update_waits_for_refresh_then_starts_once(self):
+  release=self.check()
+  with patch.object(self.up,'request',return_value=io.BytesIO(self.bytes)),patch.object(self.up,'activity',side_effect=[True,True,False]),patch.object(self.up.cancelled,'wait',return_value=False) as wait,patch('updater.subprocess.Popen') as execute:
+   self.up.download(release)
+   self.assertEqual(wait.call_count,2);execute.assert_called_once()
+  self.assertEqual(self.up.status()['phase'],'installing')
+ def test_queued_update_can_be_cancelled_without_executing_installer(self):
+  release=self.check()
+  def cancel(*_):self.up.cancel();return True
+  with patch.object(self.up,'request',return_value=io.BytesIO(self.bytes)),patch.object(self.up,'activity',return_value=True),patch.object(self.up.cancelled,'wait',side_effect=cancel),patch('updater.subprocess.Popen') as execute:
+   self.up.download(release);execute.assert_not_called()
+  self.assertEqual(self.up.status()['phase'],'cancelled');self.assertFalse(self.up.busy())
+ def test_waiting_blocks_new_work_and_interrupted_queue_does_not_stick(self):
+  self.up.write('waiting','test');self.assertTrue(self.up.busy())
+  self.up.write('waiting','test',owner=-1);self.assertFalse(self.up.busy());self.assertEqual(self.up.status()['phase'],'failed')
+ def test_installing_update_cannot_be_cancelled(self):
+  self.up.write('installing','test')
+  with self.assertRaises(ValueError):self.up.cancel()
  def test_current_version_result_stays_visible(self):
   with patch.object(self.up,'check',return_value={'available':False,'current':'1.2.0','latest':'1.2.0'}):self.up.install()
   self.assertEqual(self.up.status()['phase'],'current')

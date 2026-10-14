@@ -99,7 +99,7 @@ def discover():
 def activate(old_pid,old_root):
  old_root=Path(old_root).resolve();stopped=False;new_process=None
  with open(data/'worker.lock','a+b') as lock:
-  lock.seek(0);lock.write(b'0');lock.flush();lock.seek(0)
+  lock.seek(0)
   try:msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
   except OSError:raise RuntimeError('A report is running. Finish it before updating')
   try:

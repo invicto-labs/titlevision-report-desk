@@ -17,8 +17,9 @@ class Redirects(HTTPRedirectHandler):
   if parsed.hostname!='api.github.com':result.remove_header('Authorization')
   return result
 class Updates:
- def __init__(self,root,data,encrypt):
+ def __init__(self,root,data,encrypt,activity=None):
   self.root=Path(root);self.data=Path(data);self.encrypt=encrypt;self.lock=threading.Lock()
+  self.activity=activity or (lambda:False);self.cancelled=threading.Event()
   self.config=json.loads((self.root/'version.json').read_text(encoding='utf8'))
   if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',self.config['repository']):raise ValueError('Invalid update repository')
   version(self.config['version'])
@@ -46,14 +47,21 @@ class Updates:
  def status(self):
   try:
    result=json.loads((self.data/'update-status.json').read_text(encoding='utf8'))
-   if result.get('phase') in {'downloading','installing'} and time.time()-result.get('time',0)>=1800:
+   if result.get('phase') in {'downloading','waiting'} and result.get('owner',os.getpid())!=os.getpid():
+    return {'phase':'failed','message':'The app stopped before the update was installed. Click Get update to retry.'}
+   if result.get('phase') in {'downloading','waiting','installing'} and time.time()-result.get('time',0)>=1800:
     return {'phase':'failed','message':'The previous update did not finish. You can try Get update again.'}
    return result
   except (OSError,ValueError):return {'phase':'idle'}
  def busy(self):
-  s=self.status();return s.get('phase') in {'downloading','installing'} and time.time()-s.get('time',0)<1800
+  s=self.status();return s.get('phase') in {'downloading','waiting','installing'} and time.time()-s.get('time',0)<1800
  def write(self,phase,message,**extra):
-  temp=self.data/('update-'+uuid.uuid4().hex+'.tmp');temp.write_text(json.dumps({'phase':phase,'message':message,'time':time.time(),**extra}),encoding='utf8');temp.replace(self.data/'update-status.json')
+  temp=self.data/('update-'+uuid.uuid4().hex+'.tmp');temp.write_text(json.dumps({'phase':phase,'message':message,'time':time.time(),'owner':os.getpid(),**extra}),encoding='utf8');temp.replace(self.data/'update-status.json')
+ def cancel(self):
+  with self.lock:
+   if self.status().get('phase')!='waiting':raise ValueError('Only an update waiting for a report can be cancelled.')
+   self.cancelled.set()
+  return {'message':'Cancelling the queued update. The current report will continue.'}
  def request(self,url,binary=False):
   if not url.startswith(self.api+'/'):raise ValueError('Unexpected update URL')
   headers={'Accept':'application/octet-stream' if binary else 'application/vnd.github+json','User-Agent':'TitleVision-Report-Desk/'+self.config['version'],'X-GitHub-Api-Version':'2022-11-28'}
@@ -85,6 +93,7 @@ class Updates:
   if not self.lock.acquire(False):raise ValueError('An update is already being checked')
   try:
    if self.busy():raise ValueError('An update is already in progress')
+   self.cancelled.clear()
    release=self.check()
    if not release['available']:
     self.write('current','You are running the latest version: v'+self.config['version']+'.',target=self.config['version'])
@@ -104,7 +113,16 @@ class Updates:
      digest.update(chunk);file.write(chunk)
    if size!=release['size'] or digest.hexdigest()!=release['sha256']:raise ValueError('Installer checksum did not match; nothing was installed')
    temp.replace(target)
-   self.write('installing','Installing version '+release['latest']+'. The application will restart.',target=release['latest'])
+   deadline=time.monotonic()+3*3600
+   while self.activity():
+    self.write('waiting','Update downloaded. Waiting for the current report or workbook refresh to finish; the app will then restart automatically.',target=release['latest'])
+    if self.cancelled.wait(2):
+     self.write('cancelled','Queued update cancelled. Your report was not interrupted.');return
+    if time.monotonic()>deadline:raise ValueError('The report is still busy. Click Get update again after it finishes.')
+   with self.lock:
+    if self.cancelled.is_set():
+     self.write('cancelled','Queued update cancelled. Your report was not interrupted.');return
+    self.write('installing','Installing version '+release['latest']+'. The application will restart.',target=release['latest'])
    subprocess.Popen([str(target),'--apply-update',str(os.getpid()),str(self.root.parent),release['latest']],creationflags=0x08000000 if os.name=='nt' else 0)
   except Exception as error:
    # Never put an authentication token or signed asset URL in user-facing logs.
