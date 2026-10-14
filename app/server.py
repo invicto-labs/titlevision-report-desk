@@ -8,6 +8,7 @@ from contextlib import contextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from updater import Updates
 import main_workbook,monthly_sync,manual_edits,name_mapping,shared_workbook,dashboard
+import shared_view
 from operation_control import configure,check_cancelled,Cancelled
 ROOT=Path(__file__).resolve().parent
 PORTABLE=(ROOT/'portable.json').exists()
@@ -84,7 +85,7 @@ class WorkerBusy(ValueError):
  def __init__(self):super().__init__('Another report or workbook operation is in progress.')
 
 class RunLock:
- def __init__(self,cancellable=False,probe=False):self.cancellable=cancellable;self.operation=None;self.probe=probe
+ def __init__(self,cancellable=False,probe=False,allow_viewer=False):self.cancellable=cancellable;self.operation=None;self.probe=probe;self.allow_viewer=allow_viewer
  def __enter__(self):
   self.file=open(DATA/'worker.lock','a+b');self.file.seek(0)
   try:
@@ -94,6 +95,7 @@ class RunLock:
     import fcntl;fcntl.flock(self.file,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except OSError:self.file.close();raise WorkerBusy()
   try:
+   if not self.probe and not self.allow_viewer and shared_view.enabled(db):raise ValueError('This PC is a viewer. Use the designated report PC to change reports.')
    if self.cancellable:self.operation=OPERATIONS.begin()
    elif not self.probe:OPERATIONS.clear_stale()
   except Exception:self.file.close();raise
@@ -257,11 +259,13 @@ def fetch_month(start,end,folder,rid=None):
  run_process([NODE,ROOT/'collector.mjs'],folder,dict(credentials(),start=start,end=end,directory=str(folder),exportOnly=True),progress)
  run_process([sys.executable,ROOT/'reconcile.py',folder],folder)
 def launch_run(start,end,scheduled_day=None,background=True):
+ if shared_view.enabled(db):raise ValueError('This PC is a viewer. Collect and refresh reports on the designated report PC.')
  if UPDATES.busy():raise ValueError('An application update is in progress. Run the report after it finishes.')
  start,end=date_range(start,end);credentials();lock=RunLock(cancellable=True);lock.__enter__()
  try:
   # Any running record left while the process lock is free was interrupted.
   if UPDATES.busy():raise ValueError('An application update is queued or in progress. Run the report after it finishes.')
+  if shared_view.enabled(db):raise ValueError('This PC is a viewer. Use the designated report PC.')
   with db() as c:
    c.execute("UPDATE runs SET status='failed',message='Application stopped during this run. Run the date again.' WHERE status IN ('running','queued')")
    c.execute("DELETE FROM main_auto_pending WHERE run_id IN (SELECT id FROM runs WHERE status='failed')")
@@ -272,6 +276,7 @@ def launch_run(start,end,scheduled_day=None,background=True):
  else:perform(rid,lock)
  return rid
 def scheduled(background=False):
+ if shared_view.enabled(db):return
  if not setting('schedule',False):return
  now=datetime.now(IST)
  if (now.hour,now.minute)<(8,45):return
@@ -292,6 +297,7 @@ def schedule_loop():
   except Exception:pass
   time.sleep(30)
 def install_schedule(enabled):
+ if enabled and shared_view.enabled(db):raise ValueError('Automatic collection is disabled on viewer PCs.')
  if os.name!='nt':raise ValueError('Windows scheduling is available in this local edition.')
  if enabled:
   with db() as c:verified=c.execute("SELECT 1 FROM runs WHERE status IN ('complete','review') LIMIT 1").fetchone()
@@ -306,13 +312,18 @@ def install_schedule(enabled):
   raise ValueError('Windows could not update the schedule: '+detail)
  save_setting('schedule',enabled)
 def public_state():
+ viewer=shared_view.enabled(db);shared_error=''
  with db() as c:
   runs=[dict(r) for r in c.execute('SELECT runs.*,main_choices.choice AS mainChoice FROM runs LEFT JOIN main_choices ON main_choices.run_id=runs.id ORDER BY created DESC LIMIT 60')]
   verified=bool(c.execute("SELECT 1 FROM runs WHERE status IN ('complete','review') LIMIT 1").fetchone())
   main_books=main_workbook.books(c)
  with db() as c:syncs=[dict(r) for r in c.execute('SELECT * FROM main_sync_state ORDER BY month DESC')]
+ if viewer:
+  runs=[];syncs=[];verified=False
+  try:main_books=shared_view.books(db)
+  except (ValueError,OSError):main_books=[];shared_error='Shared folder unavailable. Connect to the company network and check folder access.'
  activity=activity_state()
- return {'activity':activity,'runs':runs,'mainBooks':main_books,'mainSyncs':syncs,'sharedFolder':shared_workbook.configured(db),'phase2':{'enabled':monthly_sync.active(),'starts':monthly_sync.START.isoformat(),'currentMonth':monthly_sync.today().strftime('%Y-%m')},'nameMapping':name_mapping.summary(DATA),'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
+ return {'pcRole':'viewer' if viewer else 'collector','sharedError':shared_error,'activity':activity,'runs':runs,'mainBooks':main_books,'mainSyncs':syncs,'sharedFolder':shared_view.configured(db) if viewer else shared_workbook.configured(db),'phase2':{'enabled':monthly_sync.active(),'starts':monthly_sync.START.isoformat(),'currentMonth':monthly_sync.today().strftime('%Y-%m')},'nameMapping':name_mapping.summary(DATA),'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':False if viewer else setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
 def downloadable_report(folder):
  def ready(directory):
   try:
@@ -365,7 +376,9 @@ class Handler(BaseHTTPRequestHandler):
     chunks=p.split('/')
     if len(chunks)!=5:raise ValueError('Invalid workbook URL')
     month=chunks[3]
-    with db() as c:file=main_workbook.download(DATA,c,month)
+    if shared_view.enabled(db):file,_=dashboard.workbook_path(DATA,db,month)
+    else:
+     with db() as c:file=main_workbook.download(DATA,c,month)
     payload=file.read_bytes();self.send_response(200);self.send_header('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');self.send_header('Content-Disposition',f'attachment; filename="TitleVision Main Error Report - {month}.xlsx"');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(payload);return
    if p.startswith('/api/runs/'):
     chunks=p.split('/');rid=chunks[3]
@@ -389,6 +402,8 @@ class Handler(BaseHTTPRequestHandler):
   try:
    self.guard(True);length=int(self.headers.get('Content-Length','0'))
    p=urlparse(self.path).path
+   if shared_view.enabled(db) and p not in ('/api/shared/viewer','/api/shared/collector','/api/shared/sync','/api/update/check','/api/update/install','/api/update/cancel','/api/update/token'):
+    raise ValueError('This PC is a viewer. Change reports and refresh source statuses on the designated report PC.')
    if p=='/api/main/edits':
     if length<=0 or length>12*1024*1024:raise ValueError('Choose an Excel workbook smaller than 12 MB.')
     month=self.headers.get('X-Workbook-Month','')
@@ -409,6 +424,11 @@ class Handler(BaseHTTPRequestHandler):
    if length<=0 or length>8192:raise ValueError('Request too large')
    obj=json.loads(self.rfile.read(length))
    if not isinstance(obj,dict):raise ValueError('Request must be a JSON object.')
+   if p in ('/api/shared/viewer','/api/shared/collector'):
+    with RunLock(allow_viewer=True):
+     if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
+     result=shared_view.configure(db,obj.get('path')) if p.endswith('/viewer') else shared_view.collector(db)
+    return self.send(200,result)
    if p=='/api/operation/stop':
     if not worker_busy():return self.send(200,{'message':'The operation has already finished.'})
     return self.send(202,OPERATIONS.request(obj.get('operationId')))
@@ -420,6 +440,7 @@ class Handler(BaseHTTPRequestHandler):
      shared_workbook.sync(ROOT,DATA,db,run_process,months)
     return self.send(200,{'message':f'Shared folder saved. {len(months)} Main workbook(s) synchronized.','path':path})
    if p=='/api/shared/sync':
+    if shared_view.enabled(db):return self.send(200,{'message':'Shared workbook list refreshed. Dashboard values are read directly from the saved Excel.','books':shared_view.books(db)})
     with RunLock():
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
      if not shared_workbook.configured(db):raise ValueError('Choose a shared folder first.')

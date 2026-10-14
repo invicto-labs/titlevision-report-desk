@@ -8,6 +8,7 @@ from decimal import Decimal,InvalidOperation
 import copy,re,threading,math
 import openpyxl
 import main_workbook,report_layout,shared_workbook
+import shared_view
 
 TEAMS=('Search','Typing','VM Team','Leadership','Triage')
 _cache={}
@@ -44,6 +45,7 @@ def totals(counts,points):
 def workbook_path(data,db,month):
     if not isinstance(month,str) or not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])',month):
         raise ValueError('Choose a valid workbook month.')
+    if shared_view.enabled(db):return shared_view.target(db,month),'shared'
     with db() as c:local=main_workbook.download(data,c,month)
     if shared_workbook.configured(db):
         return shared_workbook.target(db,month),'shared'

@@ -23,8 +23,60 @@ class ServerTests(unittest.TestCase):
  def post(self,path,body):
   request=urllib.request.Request(self.url+path,json.dumps(body).encode(),headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN,'Content-Type':'application/json'})
   return urllib.request.urlopen(request)
+ def test_viewer_discovers_shared_months_reads_counts_and_never_publishes(self):
+  import xlsxwriter,report_layout,hashlib
+  folder=server.DATA/'viewer-share';folder.mkdir(exist_ok=True)
+  file=folder/'TitleVision Main Error Report - 2026-10.xlsx'
+  with xlsxwriter.Workbook(file) as wb:
+   ws=wb.add_worksheet('SP 2');ws.write_row(0,0,report_layout.HEADERS)
+   for i,team in enumerate(['Search','Typing'],1):
+    row=['']*27;row[0]='New';row[1]='same-order';row[3]=team;row[10]='2026-10-01';row[13]=i;ws.write_row(i,0,row)
+  before=file.read_bytes();old_schedule=server.setting('schedule',False)
+  try:
+   with patch.object(server.shared_view,'location',return_value=folder),patch.object(server.shared_workbook,'sync') as sync,patch.object(server.shared_workbook,'publish') as publish:
+    with self.post('/api/shared/viewer',{'path':r'\\server\reports'}) as response:self.assertIn('Viewer connected',json.load(response)['message'])
+    state=server.public_state();self.assertEqual(state['pcRole'],'viewer');self.assertFalse(state['schedule']);self.assertEqual(state['runs'],[])
+    self.assertEqual([b['month'] for b in state['mainBooks']],['2026-10'])
+    with patch.object(server.main_workbook,'download',side_effect=AssertionError('Viewer must not read local workbooks')):
+     with urllib.request.urlopen(self.url+'/api/main/2026-10/summary') as response:summary=json.load(response)
+     self.assertTrue(summary['available']);self.assertEqual(summary['total'],2);self.assertEqual(summary['points'],3)
+     with urllib.request.urlopen(self.url+'/api/main/2026-10/current') as response:self.assertEqual(response.read(),before)
+     with urllib.request.urlopen(self.url+'/api/main/2026-10/download') as response:self.assertEqual(response.read(),before)
+    with self.post('/api/shared/sync',{}) as response:self.assertIn('list refreshed',json.load(response)['message'])
+    sync.assert_not_called();publish.assert_not_called();self.assertEqual(file.read_bytes(),before)
+    later=folder/'TitleVision Main Error Report - 2026-11.xlsx';later.write_bytes(before)
+    self.assertEqual(server.public_state()['mainBooks'][0]['month'],'2026-11');later.unlink()
+    with patch.object(server.shared_view,'location',side_effect=ValueError('Share offline')):
+     offline=server.public_state();self.assertEqual(offline['mainBooks'],[]);self.assertTrue(offline['sharedError'])
+     with urllib.request.urlopen(self.url+'/api/main/2026-10/summary') as response:self.assertFalse(json.load(response)['available'])
+  finally:server.shared_view.collector(server.db);server.save_setting('schedule',old_schedule)
+ def test_viewer_blocks_report_mutations_and_schedule_but_allows_update(self):
+  old_schedule=server.setting('schedule',False);server.save_setting('pc_role','viewer');server.save_setting('schedule',True)
+  try:
+   paths=['/api/run','/api/main/create','/api/main/delete','/api/main/refresh','/api/main/edits','/api/names/import','/api/credentials','/api/shared/configure','/api/schedule','/api/runs/'+'a'*32+'/main']
+   with patch.object(server,'credentials') as credentials:
+    for path in paths:
+     with self.assertRaises(urllib.error.HTTPError) as error:self.post(path,{})
+     self.assertIn('viewer',json.load(error.exception)['error'])
+    with self.assertRaisesRegex(ValueError,'viewer'):server.launch_run('2026-01-01','2026-01-01')
+    server.scheduled();credentials.assert_not_called()
+   with self.assertRaisesRegex(ValueError,'viewer'):
+    with server.RunLock():pass
+   self.assertFalse(server.worker_busy())
+   with patch.object(server.UPDATES,'install',return_value={'available':True}) as install:
+    with self.post('/api/update/install',{}) as response:self.assertEqual(response.status,202)
+    install.assert_called_once()
+   with self.post('/api/shared/collector',{}) as response:self.assertIn('restored',json.load(response)['message'])
+  finally:server.shared_view.collector(server.db);server.save_setting('schedule',old_schedule)
+ def test_viewer_configuration_requires_network_path_and_cannot_race_collection(self):
+  with self.assertRaises(urllib.error.HTTPError) as error:self.post('/api/shared/viewer',{'path':'C:/local'})
+  self.assertIn('shared Windows folder',json.load(error.exception)['error'])
+  with server.RunLock():
+   with self.assertRaises(urllib.error.HTTPError) as error:self.post('/api/shared/viewer',{'path':r'\\server\reports'})
+   self.assertEqual(error.exception.code,409)
+  self.assertFalse(server.shared_view.enabled(server.db))
  def test_every_json_mutation_rejects_wrong_body_shape_and_cross_origin(self):
-  paths=['/api/run','/api/credentials','/api/schedule','/api/shared/configure','/api/shared/sync','/api/main/create','/api/main/delete','/api/main/refresh','/api/update/check','/api/update/install','/api/update/cancel','/api/update/token','/api/runs/'+'a'*32+'/main']
+  paths=['/api/shared/viewer','/api/shared/collector','/api/run','/api/credentials','/api/schedule','/api/shared/configure','/api/shared/sync','/api/main/create','/api/main/delete','/api/main/refresh','/api/update/check','/api/update/install','/api/update/cancel','/api/update/token','/api/runs/'+'a'*32+'/main']
   for path in paths:
    with self.subTest(path=path):
     for body in (None,[],1,'text'):

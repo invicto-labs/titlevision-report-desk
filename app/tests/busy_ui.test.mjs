@@ -54,3 +54,22 @@ test('Stop targets the visible operation and cannot be double-clicked',async()=>
  h.run("stoppingProcess=false;state.activity={busy:false};overviewControls();");
  assert.equal(h.element('stop-process').hidden,true);
 });
+test('viewer hides collection tools and keeps dashboard refresh and updates available',()=>{
+ const h=harness();h.run("state.pcRole='viewer';sharedControls();mainBooksDisplay();updateDisplay();");
+ assert.equal(h.element('collect-section').hidden,true);
+ assert.equal(h.element('overview-refresh-status').hidden,true);
+ assert.equal(h.element('run').disabled,true);
+ assert.equal(h.element('shared-sync').textContent,'Refresh dashboard');
+ assert.equal(h.element('shared-sync').disabled,false);
+ assert.equal(h.element('get-update').disabled,false);
+ assert.equal(h.element('overview-reload').disabled,false);
+ assert.equal(h.element('shared-role').value,'viewer');
+});
+test('viewer setup selection survives polling until submitted',()=>{
+ const h=harness();h.element('shared-role').value='viewer';h.element('shared-role').onchange();
+ h.element('shared-path').value='\\\\server\\new-share';h.run('sharedControls();');
+ assert.equal(h.element('shared-role').value,'viewer');
+ assert.equal(h.element('shared-path').value,'\\\\server\\new-share');
+ assert.equal(h.element('shared-path').readOnly,false);
+ assert.equal(h.element('shared-save').textContent,'Connect viewer');
+});

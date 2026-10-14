@@ -1,3 +1,9 @@
+## Version 1.4.17
+
+- Add Viewer PC mode for teammates to connect to the same network folder and display monthly team errors, points and latest-date summaries without collecting reports locally.
+- Discover monthly Excel files directly from the share; refresh saved values automatically and show an unavailable state when the folder cannot be read. Never fall back to stale local workbooks.
+- Keep collection, source refresh and workbook publishing on the designated Report PC. Viewer mode pauses scheduling and rejects report mutations while preserving existing local data and update access.
+
 ## Version 1.4.16
 
 - Add Stop process beside active collection/monthly-refresh progress. Stop only that operation's subprocess tree, keep the worker lock until cleanup finishes, and retain previously verified reports and workbook revisions.

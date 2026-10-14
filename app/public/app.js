@@ -1,9 +1,15 @@
 const $=id=>document.getElementById(id);let state=null,selected=null,pending=false,checkingUpdate=false,updateMessage='',loadedVersion=null,mainBusy=false;
 const labels={cancelled:'Stopped',complete:'Complete',review:'Needs review',failed:'Failed',running:'Running',queued:'Queued'};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let busyNotice=false,stoppingProcess=false;
+let busyNotice=false,stoppingProcess=false,roleSelectionDirty=false;
+function isViewer(){return state?.pcRole==='viewer';}
 function notice(message,error=false){busyNotice=false;$('notice').textContent=message;$('notice').className=error?'error':'';$('notice').hidden=!message;}
-async function api(url,body){const r=await fetch(url,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrf},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw responseError(j);return j;}
+async function api(url,body){
+ const controller=body===undefined?new AbortController():null;
+ const timer=controller?setTimeout(()=>controller.abort(),15000):null;timer?.unref?.();
+ try{const r=await fetch(url,body===undefined?{signal:controller.signal}:{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrf},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw responseError(j);return j;}
+ finally{if(timer)clearTimeout(timer);}
+}
 function responseError(result){
  const error=Error(result.error||'Request failed');error.code=result.code;
  if(result.code==='worker_busy'&&state){state.activity=result.activity;mainBooksDisplay();}
@@ -17,21 +23,46 @@ function preventBusyAction(){
  busyNotice=Boolean(state?.activity?.busy);return true;
 }
 function workControls(){
- const blocked=workBlocked();$('run').disabled=blocked;$('shared-sync').disabled=blocked||!state?.sharedFolder;
- for(const id of ['credentials','shared-form','name-map-form'])for(const button of $(id).querySelectorAll('button'))button.disabled=blocked;
+ const blocked=workBlocked();$('run').disabled=blocked||isViewer();$('shared-sync').disabled=blocked||!state?.sharedFolder;
+ for(const id of ['credentials','shared-form','name-map-form'])for(const button of $(id).querySelectorAll('button'))button.disabled=blocked||(isViewer()&&id!=='shared-form');
 }
 function period(r){return r.start===r.end?r.start:`${r.start} – ${r.end}`;}
 async function detail(r){if(!r)return;selected=r.id;$('period').textContent=period(r);$('status').textContent=labels[r.status];$('status').className='badge '+r.status;$('progress').textContent=r.message;$('errors').textContent=r.count??'—';$('points').textContent=r.points??'—';$('review').textContent=r.issues??0;const ready=['complete','review'].includes(r.status);$('latest-download').hidden=!ready;$('latest-download').href=`/api/runs/${r.id}/download`;if(ready){const d=await api('/api/runs/'+r.id);$('issues-panel').hidden=!d.issues.length;$('issues').innerHTML=d.issues.map(i=>`<li><strong>${esc(i.order)}</strong> — ${esc(i.message)}</li>`).join('');}else $('issues-panel').hidden=true;}
-async function refresh(){try{const initial=!state,previous=state;state=await api('/api/state');const completed=state.runs.find(r=>['complete','review'].includes(r.status)&&previous?.runs.some(old=>old.id===r.id&&['queued','running'].includes(old.status)));if(completed)selected=completed.id;mainBooksDisplay();if(loadedVersion&&loadedVersion!==state.version){location.reload();return;}loadedVersion=state.version;if(initial){$('start').value=state.yesterday;$('end').value=state.yesterday;}$('start').max=state.yesterday;$('end').max=state.yesterday;$('schedule-label').textContent=state.schedule?'Enabled · Weekdays at 8:45 AM India time · Monday covers Friday–Sunday':'Paused · Turn on automatic weekday collection';$('schedule').textContent=state.schedule?'Pause schedule':'Enable schedule';$('credentials-state').textContent=state.credentialsSaved?'Sign-in saved and encrypted. Enter a password only to replace it.':'Save your sign-in before running a report.';$('run').disabled=workBlocked();$('history').innerHTML=state.runs.length?state.runs.map(r=>`<tr class="history-row" data-id="${r.id}" tabindex="0"><td><strong>${esc(period(r))}</strong></td><td>${esc(new Date(r.created).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',dateStyle:'medium',timeStyle:'short'}))}</td><td><span class="badge ${r.status}">${labels[r.status]}</span></td><td>${r.count??'—'}</td><td>${r.points??'—'}</td><td>${['complete','review'].includes(r.status)?`<a href="/api/runs/${r.id}/download">Download Excel</a>`:'—'}</td></tr>`).join(''):'<tr><td colspan="6" class="empty">Your collected reports will appear here.</td></tr>';
-$('shared-state').textContent=state.sharedFolder?'Enabled':'Local only';$('shared-detail').textContent=state.sharedFolder?'Shared location: '+state.sharedFolder+' · One Excel editor at a time. Use Sync now after saved edits if you need them in the app immediately.':'Choose a reachable network folder. Existing monthly workbooks will be copied there.';if(state.sharedFolder){$('shared-path').value=state.sharedFolder;$('shared-path').readOnly=true;$('shared-save').hidden=true;}$('shared-sync').disabled=!state.sharedFolder||workBlocked();$('main-edit-hint').textContent=state.sharedFolder?'Open the workbook in the shared folder. Edit Team, Searcher, Typer or Final Error Contributor, then save and close Excel. The next report or Sync now imports those corrections and updates the same shared file. Keep all source rows and columns.':'Download the latest Main workbook, edit Team in column D, or edit Searcher, Typer or Final Error Contributor in Excel and save it. Then click Save Excel edits and choose that file. Saved corrections stay with each error during future monthly updates. Statuses, points and client comments continue refreshing from TitleVision. Keep all original rows and columns.';
+async function refresh(){try{const initial=!state,previous=state;state=await api('/api/state');const completed=state.runs.find(r=>['complete','review'].includes(r.status)&&previous?.runs.some(old=>old.id===r.id&&['queued','running'].includes(old.status)));if(completed)selected=completed.id;mainBooksDisplay();if(loadedVersion&&loadedVersion!==state.version){location.reload();return;}loadedVersion=state.version;if(initial){$('start').value=state.yesterday;$('end').value=state.yesterday;}$('start').max=state.yesterday;$('end').max=state.yesterday;$('schedule-label').textContent=state.schedule?'Enabled · Weekdays at 8:45 AM India time · Monday covers Friday–Sunday':'Paused · Turn on automatic weekday collection';$('schedule').textContent=state.schedule?'Pause schedule':'Enable schedule';$('credentials-state').textContent=state.credentialsSaved?'Sign-in saved and encrypted. Enter a password only to replace it.':'Save your sign-in before running a report.';$('run').disabled=workBlocked()||isViewer();$('history').innerHTML=state.runs.length?state.runs.map(r=>`<tr class="history-row" data-id="${r.id}" tabindex="0"><td><strong>${esc(period(r))}</strong></td><td>${esc(new Date(r.created).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',dateStyle:'medium',timeStyle:'short'}))}</td><td><span class="badge ${r.status}">${labels[r.status]}</span></td><td>${r.count??'—'}</td><td>${r.points??'—'}</td><td>${['complete','review'].includes(r.status)?`<a href="/api/runs/${r.id}/download">Download Excel</a>`:'—'}</td></tr>`).join(''):'<tr><td colspan="6" class="empty">Your collected reports will appear here.</td></tr>';
+sharedControls();$('main-edit-hint').textContent=state.sharedFolder?'Open the workbook in the shared folder. Edit Team, Searcher, Typer or Final Error Contributor, then save and close Excel. The next report or Sync now imports those corrections and updates the same shared file. Keep all source rows and columns.':'Download the latest Main workbook, edit Team in column D, or edit Searcher, Typer or Final Error Contributor in Excel and save it. Then click Save Excel edits and choose that file. Saved corrections stay with each error during future monthly updates. Statuses, points and client comments continue refreshing from TitleVision. Keep all original rows and columns.';
 $('schedule').disabled=!state.schedule&&!state.verifiedLive;if(!state.schedule&&!state.verifiedLive)$('schedule-label').textContent='Paused · A complete live report must pass verification first';
-const r=state.runs.find(r=>r.id===selected)||state.runs[0];await detail(r);if(initial&&!state.credentialsSaved){$('all-settings').open=true;$('settings').open=true;}}catch(e){if(state?.update?.phase!=='installing')notice('Cannot connect to Report Desk. '+e.message,true);}}
-$('run-form').addEventListener('submit',async e=>{e.preventDefault();if(preventBusyAction())return;pending=true;mainBooksDisplay();try{const r=await api('/api/run',{start:$('start').value,end:$('end').value});selected=r.id;notice('Report started. You can leave this page open to follow its progress.');await refresh();}catch(e){reportError(e);}finally{pending=false;await refresh();}});
+const r=state.runs.find(r=>r.id===selected)||state.runs[0];await detail(r);if(initial&&!state.credentialsSaved&&!isViewer()){$('all-settings').open=true;$('settings').open=true;}}catch(e){if(isViewer())overviewEmpty('Shared dashboard unavailable. Checking again automatically.');if(state?.update?.phase!=='installing')notice('Cannot connect to Report Desk. '+e.message,true);}}
+$('run-form').addEventListener('submit',async e=>{e.preventDefault();if(isViewer()){notice('Run reports on the designated report PC.');return;}if(preventBusyAction())return;pending=true;mainBooksDisplay();try{const r=await api('/api/run',{start:$('start').value,end:$('end').value});selected=r.id;notice('Report started. You can leave this page open to follow its progress.');await refresh();}catch(e){reportError(e);}finally{pending=false;await refresh();}});
 $('yesterday').onclick=()=>{$('start').value=state.yesterday;$('end').value=state.yesterday;};
 $('credentials').onsubmit=async e=>{e.preventDefault();if(preventBusyAction())return;const button=e.target.querySelector('button');button.disabled=true;try{await api('/api/credentials',{username:$('username').value,password:$('password').value});$('password').value='';notice('Sign-in saved securely for this Windows account.');await refresh();}catch(e){reportError(e);}finally{workControls();}};
 $('schedule').onclick=async()=>{$('schedule').disabled=true;try{await api('/api/schedule',{enabled:!state.schedule});notice('Daily schedule updated.');await refresh();}catch(e){reportError(e);}finally{$('schedule').disabled=false;}};
-$('shared-form').onsubmit=async e=>{e.preventDefault();if(preventBusyAction())return;mainBusy=true;mainBooksDisplay();try{const result=await api('/api/shared/configure',{path:$('shared-path').value.trim()});notice(result.message);await refresh();}catch(error){reportError(error);}finally{mainBusy=false;await refreshWithVersion();}};
-$('shared-sync').onclick=async()=>{if(preventBusyAction())return;mainBusy=true;mainBooksDisplay();notice('Importing saved edits and updating the shared workbooks…');try{const result=await api('/api/shared/sync',{});notice(result.message);await refresh();}catch(error){reportError(error);}finally{mainBusy=false;await refreshWithVersion();}};
+function sharedControls(){
+ if(!roleSelectionDirty)$('shared-role').value=state.pcRole||'collector';
+ const selectedViewer=$('shared-role').value==='viewer';
+ $('shared-state').textContent=isViewer()?'Viewer PC':state.sharedFolder?'Report PC · Shared':'Report PC · Local only';
+ $('shared-detail').textContent=state.sharedError||(state.sharedFolder?(isViewer()?'Reading shared Excel: ':'Publishing shared Excel: ')+state.sharedFolder+(isViewer()?' · Saved changes appear automatically, usually within 15 seconds.':' · One Excel editor at a time. Save and close Excel before syncing.'):'Enter the same network folder used by the report PC.');
+ if(!roleSelectionDirty&&document.activeElement!==$('shared-path'))$('shared-path').value=state.sharedFolder||'';
+ $('shared-path').readOnly=!selectedViewer&&!isViewer()&&Boolean(state.sharedFolder);
+ $('shared-path').required=selectedViewer||!isViewer();
+ $('shared-save').hidden=!selectedViewer&&!isViewer()&&Boolean(state.sharedFolder);
+ $('shared-save').textContent=selectedViewer?'Connect viewer':isViewer()?'Use report PC mode':'Use shared folder';
+ $('shared-sync').textContent=isViewer()?'Refresh dashboard':'Sync now';
+ $('shared-sync').disabled=!state.sharedFolder||workBlocked();
+ for(const id of ['collect-section','monthly-section','history-section','employee-names','settings'])$(id).hidden=isViewer();
+ $('overview-refresh-status').hidden=isViewer();
+ if(isViewer())$('issues-panel').hidden=true;
+}
+$('shared-role').onchange=()=>{roleSelectionDirty=true;sharedControls();};
+$('shared-form').onsubmit=async e=>{
+ e.preventDefault();if(preventBusyAction())return;mainBusy=true;mainBooksDisplay();
+ try{
+  const selectedViewer=$('shared-role').value==='viewer';
+  const route=selectedViewer?'/api/shared/viewer':isViewer()?'/api/shared/collector':'/api/shared/configure';
+  const result=await api(route,{path:$('shared-path').value.trim()});roleSelectionDirty=false;overviewLast=0;notice(result.message);
+ }catch(error){reportError(error);}
+ finally{mainBusy=false;await refreshWithVersion();}
+};
+$('shared-sync').onclick=async()=>{if(preventBusyAction())return;mainBusy=true;mainBooksDisplay();notice(isViewer()?'Reading the shared workbook…':'Importing saved edits and updating the shared workbooks…');try{const result=await api('/api/shared/sync',{});overviewLast=0;notice(result.message);}catch(error){reportError(error);}finally{mainBusy=false;await refreshWithVersion();}};
 $('history').onclick=e=>{if(e.target.closest('a'))return;const row=e.target.closest('[data-id]');if(row)detail(state.runs.find(r=>r.id===row.dataset.id)).catch(e=>notice(e.message,true));};
 $('history').onkeydown=e=>{if(e.key==='Enter'){const row=e.target.closest('[data-id]');if(row)detail(state.runs.find(r=>r.id===row.dataset.id)).catch(e=>notice(e.message,true));}};
 function updateDisplay(){if(!state)return;$('app-version').textContent=state.version?'Running v'+state.version:'Version unavailable';const updating=['downloading','waiting','installing'].includes(state.update?.phase);$('get-update').disabled=checkingUpdate||updating;$('cancel-update').hidden=state.update?.phase!=='waiting';$('get-update').textContent=checkingUpdate?'Checking…':state.update?.phase==='waiting'?'Update queued':updating?'Updating…':'Get update';$('update-status').textContent=checkingUpdate?'Checking the latest published release…':updateMessage||state.update?.message||'Check for a published release.';$('github-state').textContent=state.githubAccessSaved?'GitHub update access is saved and encrypted.':'No token saved. An existing Git sign-in as invicto-labs will be used if available.';}
@@ -52,7 +83,7 @@ $('clear-github-access').onclick=async()=>{try{await api('/api/update/token',{to
 function mainBooksDisplay(){
  overviewControls();
  const books=state.mainBooks||[];
- const enabled=state.phase2?.enabled,blocked=workBlocked();
+ const enabled=state.phase2?.enabled&&!isViewer(),blocked=workBlocked();
  $('phase2-note').textContent=enabled?'Verified runs add their dates to the Main workbook automatically. The app rechecks the full month for status, points and comment changes. On weekdays it also revisits older months with disputed errors. Download the latest workbook after each refresh.':'Monthly refresh begins with September 2026.';
  $('create-main-form').hidden=!enabled;$('create-main').disabled=blocked;
  if(!$('main-month').value)$('main-month').value=enabled?state.phase2.currentMonth:'2026-09';
@@ -65,6 +96,7 @@ function mainBooksDisplay(){
  }).join(''):'<tr><td colspan="6" class="empty">No main workbook yet. Complete a verified report to create one automatically.</td></tr>';
 }
 async function manageMain(action,month){
+ if(isViewer()){notice('Use the designated report PC to change reports.');return;}
  if(preventBusyAction())return;
  if(action==='edits'){chooseEditedWorkbook(month);return;}
  if(action==='delete'&&!window.confirm(`Delete the ${month} main workbook and remove its included dates? Daily reports are kept so you can rebuild it.`))return;
@@ -110,14 +142,14 @@ function overviewControls(){
   $('overview-month').innerHTML=books.length?books.map(b=>`<option value="${esc(b.month)}">${esc(new Date(b.month+'-01T12:00:00').toLocaleDateString('en-IN',{month:'long',year:'numeric'}))}</option>`).join(''):'<option value="">No workbook yet</option>';
   $('overview-month').value=books.some(b=>b.month===previous)?previous:books.some(b=>b.month===state.phase2?.currentMonth)?state.phase2.currentMonth:books[0]?.month||'';
  }
- $('header-schedule').textContent=state.schedule?'Scheduled · 8:45 AM weekdays':'Automatic collection paused';
+ $('header-schedule').textContent=isViewer()?'Viewer PC · Shared Excel':state.schedule?'Scheduled · 8:45 AM weekdays':'Automatic collection paused';
  $('operation-state').hidden=!(state.activity?.busy||mainBusy||pending);$('operation-state').textContent=state.activity?.busy?'Working · '+state.activity.message+' — Your last saved workbook remains available while this finishes.':mainBusy||pending?'Starting your request…':'';
  if(busyNotice){notice(state.activity?.busy?'Work is in progress. '+state.activity.message:'The previous operation has finished. You can start your next action.');busyNotice=Boolean(state.activity?.busy);}
  $('stop-process').hidden=!state.activity?.busy||!state.activity?.cancellable;$('stop-process').disabled=stoppingProcess||Boolean(state.activity?.stopping);$('stop-process').textContent=stoppingProcess||state.activity?.stopping?'Stopping…':'Stop process';
  $('overview-refresh-status').disabled=!$('overview-month').value||workBlocked();
  workControls();
  $('overview-reload').disabled=overviewLoading||!$('overview-month').value;
- if(!books.length)overviewEmpty('Collect a report to create a workbook');
+ if(!books.length)overviewEmpty(state.sharedError||(isViewer()?'No monthly workbooks in the shared folder yet.':'Collect a report to create a workbook'));
 }
 async function fetchOverview(force=false){
  if(!state||overviewLoading)return;
