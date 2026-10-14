@@ -39,17 +39,17 @@ function display(user,role,id,order){
 const details=source.map(({values:r,id,statusFields,statusHistory})=>{
  const p=staff[id];if(!p)throw Error('Missing verified order '+r[1]);const team=teamFor(r);
  if(p.equivalentProducts?.length>1)issues.push({id,order:r[1],kind:'equivalent_product_histories',message:`${p.equivalentProducts.length} products overlap Error Committed Date. Their completed Search and Typing usernames agree; review the product if additional attribution is needed.`});
- if((team==='Search'&&!p.names[0])||(team==='Type'&&!p.names[1]))issues.push({id,order:r[1],kind:'missing_name',message:`No completed human ${team==='Search'?'Search':'Typing'} task was recorded. Contributor left blank.`});
- if(/\b(?:VM|triage)\b/i.test(r[8])&&!['Triage','VM team'].includes(team))issues.push({id,order:r[1],kind:'cause_review',message:'Notes mention VM or triage. Review the cause before overriding Team.'});
+ if((team==='Search'&&!p.names[0])||(team==='Typing'&&!p.names[1]))issues.push({id,order:r[1],kind:'missing_name',message:`No completed human ${team==='Search'?'Search':'Typing'} task was recorded. Contributor left blank.`});
+ if(/\b(?:VM|triage)\b/i.test(r[8])&&!['Triage','VM Team'].includes(team))issues.push({id,order:r[1],kind:'cause_review',message:'Notes mention VM or triage. Review the cause before overriding Team.'});
  const searcher=display(p.names[0],'Search',id,r[1]),typer=display(p.names[1],'Type',id,r[1]);
- const contributor=team==='Search'?searcher:team==='Type'?typer:['Triage','VM team'].includes(team)?team:'';
+ const contributor=team==='Search'?searcher:team==='Typing'?typer:['Triage','VM Team'].includes(team)?team:'';
  if(statusHistory&&(!Array.isArray(statusFields)||statusFields.length!==4))throw Error('Status comment fields were not reconciled');
  const decision=statusFields??['','','',''];
  if(['Chargeable','Non-Chargeable'].includes(r[0])&&!decision[3])issues.push({id,order:r[1],kind:'missing_client_comment',message:'TitleVision has a final status but no identifiable client reply. Final status copied; comment left blank.'});
  return [r[0],r[1],p.tv,team,p.client,r[5],r[6],r[7],r[8],r[9],date(r[12]),r[13],r[14],Number(r[15]),date(r[16]),date(r[17]),r[18],r[19],searcher,'',typer,'',contributor,...decision];
 });
 if(details.length!==collection.count||details.reduce((n,r)=>n+r[13],0)!==collection.points)throw Error('Export totals mismatch');
-const specs=[{name:'ErrorsByContributor',field:22,title:'Final Error Contributor',col:0,row:5},{name:'ErrorsByTeam',field:3,title:'Team',col:4,row:5},{name:'ErrorsByCategory',field:6,title:'Error Category',col:8,row:5},{name:'ErrorsByStatus',field:0,title:'Status',col:4,row:15}];
-for(const p of specs){const items=new Set(details.map(r=>r[p.field]||''));if([3,22].includes(p.field))items.add('VM team');p.items=[...items].sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b));p.height=p.items.length+3;}
+// The shared Python layout builder creates the canonical summary for every report.
+const specs=[];
 await fs.writeFile(path.join(dir,'payload.json'),JSON.stringify({data:[headers,...details],specs,tableName:'TitleVisionErrors',widths}));
 await fs.writeFile(path.join(dir,'issues.json'),JSON.stringify(issues));

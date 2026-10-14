@@ -66,18 +66,8 @@ def load_report(root, data, run):
 
 def make_payload(root, rows):
     layout = json.loads((root/'templates/layout.json').read_text(encoding='utf8'))
-    specs = []
-    for name, field, title, col, row in [
-        ('ErrorsByContributor',22,'Final Error Contributor',0,5),
-        ('ErrorsByTeam',3,'Team',4,5),
-        ('ErrorsByCategory',6,'Error Category',8,5),
-        ('ErrorsByStatus',0,'Status',4,15),
-    ]:
-        items = {r[field] or '' for r in rows}
-        if field in (3,22):
-            items.add('VM team')
-        items = sorted(items, key=lambda item: (item == '', item.casefold()))
-        specs.append(dict(name=name,field=field,title=title,col=col,row=row,items=items,height=len(items)+3))
+    rows = [report_layout.normalize_values(row) for row in rows]
+    specs = report_layout.pivot_specs(rows)
     return dict(data=[layout['headers'],*rows],specs=specs,tableName='TitleVisionErrors',widths=layout['widths'])
 
 

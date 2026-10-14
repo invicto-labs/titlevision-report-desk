@@ -28,7 +28,7 @@ class MonthlySyncTests(unittest.TestCase):
  def source(self,id,day,points=3,status='New'):
   stamp=datetime.fromisoformat(day).strftime('%m/%d/%Y')
   v=['']*20
-  for i,value in {0:status,1:'SAME-ORDER',6:'Searching',7:'Error example',9:'Full Title',12:stamp+' 12:00:00 PM',15:str(points),16:stamp,17:stamp,18:'EPON-1'}.items():v[i]=value
+  for i,value in {0:status,1:'SAME-ORDER',6:'Searching',7:'Error example',9:'Full Title',14:'CA',12:stamp+' 12:00:00 PM',15:str(points),16:stamp,17:stamp,18:'EPON-1'}.items():v[i]=value
   return {'sourceId':str(id),'url':'https://tv.datatracetitle.com/OrderOverview.aspx?PublicOrderId=example-order','values':v}
  def seed(self,start,end,source):
   rid=uuid.uuid4().hex;folder=self.data/'runs'/rid;folder.mkdir(parents=True)
@@ -36,7 +36,7 @@ class MonthlySyncTests(unittest.TestCase):
   for s in source:
    v=s['values'];r=['']*27;r[0]=v[0];r[1]=v[1];r[6]=v[6];r[7]=v[7];r[9]=v[9]
    r[10]=(datetime.strptime(v[12],'%m/%d/%Y %I:%M:%S %p')-datetime(1899,12,30)).total_seconds()/86400
-   r[13]=float(v[15]);r[14]=r[15]=int(r[10]);r[16]=v[18];r[18]='Searcher';r[20]='Typer';r[3]='Search';r[22]='Searcher';rows.append(r)
+   r[12]=v[14];r[13]=float(v[15]);r[14]=r[15]=int(r[10]);r[16]=v[18];r[18]='Searcher';r[20]='Typer';r[3]='Search';r[22]='Searcher';rows.append(r)
   collection={'start':start,'end':end,'count':len(rows),'points':sum(r[13] for r in rows)}
   for name,obj in [('source.json',source),('payload.json',main.make_payload(ROOT,rows)),('collection.json',collection),('validation.json',{'passed':True,**collection})]:(folder/name).write_text(json.dumps(obj),encoding='utf8')
   with self.db() as c:c.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,start,end,'complete','verified','now',len(rows),collection['points'],0,None))
@@ -131,7 +131,7 @@ class MonthlySyncTests(unittest.TestCase):
   with self.db() as c:c.execute('INSERT INTO main_edits VALUES (?,?,?,?)',('2026-10','1',json.dumps({'22':'Type'}),'now'))
   sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
   row=self.book()[1][0]
-  self.assertEqual((row[3],row[22]),('Type','Typer'))
+  self.assertEqual((row[3],row[22]),('Typing','Typer'))
  def test_refresh_updates_approved_rows_without_adding_unapproved_rows(self):
   approved=self.source(1,'2026-10-01');pending=self.source(2,'2026-10-02')
   self.live=[approved,pending];self.add(self.seed('2026-10-01','2026-10-01',[approved]))
@@ -211,12 +211,12 @@ class MonthlySyncTests(unittest.TestCase):
   self.live=copy.deepcopy(source);points=[3,2,1,4,0,5]
   for entry,status,value in zip(self.live,SITE_STATUSES,points):entry['values'][0]=status;entry['values'][15]=str(value)
   self.add(rid,self.real_build);file,rows=self.book();wb=openpyxl.load_workbook(file,data_only=True)
-  self.assertEqual(wb['Summary']['A2'].value,'October 2026 Main Workbook')
+  self.assertEqual(wb['Sheet1']['A3'].value,'Names')
   self.assertEqual([wb['SP 2'].cell(i+2,1).value for i in range(6)],list(SITE_STATUSES))
   self.assertEqual([wb['SP 2'].cell(i+2,14).value for i in range(6)],points)
   self.assertEqual([wb['SP 2'].cell(7,j).value for j in range(24,28)],['Disputed','Our reply','Chargeable','Client reply'])
-  self.assertEqual(len(wb['Summary']._pivots),4)
-  for pivot in wb['Summary']._pivots:
+  self.assertEqual(len(wb['Sheet1']._pivots),4)
+  for pivot in wb['Sheet1']._pivots:
    self.assertEqual(pivot.cache.recordCount,6)
   with zipfile.ZipFile(file) as archive:
    ns={'x':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
@@ -225,7 +225,7 @@ class MonthlySyncTests(unittest.TestCase):
    for name in caches:
     field=ET.fromstring(archive.read(name)).find('x:cacheFields/x:cacheField',ns)
     self.assertEqual({s.get('v') for s in field.findall('x:sharedItems/x:s',ns)},set(SITE_STATUSES))
-  totals={r[4]:tuple(r[5:7]) for r in wb['Summary'].values if r[4] in SITE_STATUSES}
+  totals={r[4]:tuple(r[5:7]) for r in wb['Sheet1'].values if r[4] in SITE_STATUSES}
   self.assertEqual(totals,{status:(1,value) for status,value in zip(SITE_STATUSES,points)})
   fixture=ROOT/'tests/results'/('report-phase2-'+uuid.uuid4().hex);fixture.mkdir();shutil.copy2(file,fixture/'report.xlsx')
   print('PHASE2_FIXTURE='+str(fixture/'report.xlsx'))
@@ -252,15 +252,15 @@ class MonthlySyncTests(unittest.TestCase):
   self.live[0]['values'][0]='Non-Chargeable';self.live[0]['values'][15]='1'
   b=self.seed('2026-10-02','2026-10-02',[next_day]);self.add(b,self.real_build)
   file,rows=self.book();self.assertEqual(len(rows),3)
-  self.assertEqual((rows[0][3],rows[0][20:23]),('Type',['Corrected Typer','','Corrected Typer']))
+  self.assertEqual((rows[0][3],rows[0][20:23]),('Typing',['Corrected Typer','','Corrected Typer']))
   self.assertEqual(rows[1][22],'Reviewed Contributor');self.assertEqual(rows[2][22],'Searcher')
   self.assertEqual(rows[0][23:27],['Disputed','Our reply','Non-Chargeable','Client reply'])
   # Recollect the edited error's dates: corrections follow the error ID.
   self.add(self.seed('2026-10-01','2026-10-01',first),self.real_build)
   file,rows=self.book();self.assertEqual(rows[1][22],'Reviewed Contributor')
   wb=openpyxl.load_workbook(file);self.assertEqual(wb['SP 2'].tables['TitleVisionErrors'].ref,'A1:AB4')
-  self.assertTrue(wb['SP 2'].column_dimensions['AB'].hidden);self.assertEqual(len(wb['Summary']._pivots),4)
-  self.assertEqual(wb['Summary']._pivots[0].cache.recordCount,3)
+  self.assertTrue(wb['SP 2'].column_dimensions['AB'].hidden);self.assertEqual(len(wb['Sheet1']._pivots),4)
+  self.assertEqual(wb['Sheet1']._pivots[0].cache.recordCount,3)
   self.assertIn('Reviewed Contributor',wb['SP 2']['W3'].value)
   fixture=ROOT/'tests/results'/('report-edits-'+uuid.uuid4().hex);fixture.mkdir();shutil.copy2(file,fixture/'report.xlsx')
   print('EDITS_FIXTURE='+str(fixture/'report.xlsx'))

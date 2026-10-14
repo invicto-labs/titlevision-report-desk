@@ -32,15 +32,20 @@ reports are included in the download. Existing private staff display-name maps
 are preserved during updates. New PCs can add their own data\names.json map.
 
 MAIN MONTHLY WORKBOOK
-After a report completes, choose Yes to add it to the main monthly workbook, or
-No to leave the main workbook unchanged. Nothing is added automatically, including
-scheduled reports. Select an earlier report in history to make its choice later.
-Each month has one download, with all approved records in the same detail sheet.
-Every error is preserved, even for the same order on the same day or different days.
-Adding a new collection of previously approved dates replaces those dates only;
-repeating the same approval does not add duplicate rows. Summary PivotTables and
-the editable Team/contributor formulas are retained. Download the latest main Excel
-from the app. Edits to downloaded copies are not imported back into the app.
+Verified scheduled and manual reports add their dates to the monthly workbook.
+Every error is preserved, even for the same order on different days. Month-to-date
+statuses, points and comments are checked again, then the summary PivotTables are
+rebuilt. Existing saved Team and contributor corrections are retained.
+
+SHARED TEAM WORKBOOK (OPTIONAL)
+Use only one designated report PC for collection. In its dashboard, choose a
+Windows network folder under Shared team workbook. The app publishes one current
+Main workbook per month there. Other team members open that same Excel file from
+the shared folder. Only one person should edit at a time. Save and close Excel
+before a report or status refresh; Sync now imports saved corrections immediately.
+If the file is open, changed during refresh, missing or unrecognized, publication
+stops and the previous shared copy is kept. The designated PC retains validated
+local revisions, source evidence and its Windows-encrypted TitleVision sign-in.
 
 UPDATES
 The Application updates panel shows the running version. Get update downloads

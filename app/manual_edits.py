@@ -6,15 +6,15 @@ import openpyxl
 import report_layout
 
 EDITABLE = (3, 18, 20, 22)
-TEAMS = ('', 'Search', 'Type', 'Typing', 'Triage', 'VM team')
+TEAMS = ('', *report_layout.TEAMS)
 ID_HEADER = 'TitleVision Error ID'
 
 def initialize(c):
     c.execute('CREATE TABLE IF NOT EXISTS main_edits (month TEXT, source_id TEXT, fields TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY(month,source_id))')
 
 def contributor(row):
-    team = (row[3] or '').strip()
-    return 'Triage' if team == 'Triage' else 'VM team' if team == 'VM team' else (row[18] or '') if team == 'Search' else (row[20] or '') if team in ('Type','Typing') else ''
+    team = report_layout.normalize_team((row[3] or '').strip())
+    return team if team in ('Triage','VM Team','Leadership') else (row[18] or '') if team == 'Search' else (row[20] or '') if team in ('Type','Typing') else ''
 
 def load(db, month):
     with db() as c:
@@ -30,7 +30,8 @@ def apply(rows, audit, edits):
             key = str(field)
             if field == 3 and key not in saved: key = '22'  # older saved Team edits
             if key in saved: row[field] = saved[key]
-        override = saved.get('final')
+        row[3] = report_layout.normalize_team(row[3])
+        override = report_layout.normalize_override(saved.get('final'))
         if override and override['team'] != row[3]: override = None
         row[22] = override['name'] if override else contributor(row)
         overrides.append(override)
@@ -96,7 +97,10 @@ def save(root, data, db, run_process, month, content):
                 value = values[j] or ''
                 if cells[j].data_type in ('f','e') or not isinstance(value,str) or len(value)>255:
                     raise ValueError('Contributor fields must be plain text, up to 255 characters.')
-                if j==3 and value not in TEAMS: raise ValueError('Choose Search, Type, Triage or VM team.')
+                if j==3:
+                    value = report_layout.normalize_team(value)
+                    values[3] = value
+                    if value not in TEAMS: raise ValueError('Choose Search, Typing, Triage, VM Team or Leadership.')
                 if value != (original[j] or ''):
                     if (now[j] or '') not in ((original[j] or ''),value): raise ValueError('A newer saved correction conflicts with this copy. Download the latest workbook and edit it again.')
                     saved[str(j)] = value; changed.append(j)
@@ -104,6 +108,7 @@ def save(root, data, db, run_process, month, content):
             if cells[22].data_type != 'f':
                 value = values[22] or ''
                 if cells[22].data_type == 'e' or not isinstance(value,str) or len(value)>255: raise ValueError('Final Error Contributor must be plain text.')
+                if value == 'VM team': value = 'VM Team'
                 if value != (original[22] or ''):
                     if (now[22] or '') not in ((original[22] or ''),value): raise ValueError('A newer contributor correction conflicts with this copy. Download the latest workbook.')
                     saved['final'] = {'team':values[3] or '', 'name':value};changed.append(22)

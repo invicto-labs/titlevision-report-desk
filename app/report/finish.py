@@ -54,7 +54,7 @@ records=root('pivotCacheRecords',{'count':str(len(rows))})
 for r in rows:
  rec=sub(records,'r')
  for j,v in enumerate(r):
-  if j in shared:sub(rec,'x',{'v':str(shared[j].index(v or ''))})
+  if j in shared:sub(rec,'x',{'v':str(shared[j].index(v if v is not None else ''))})
   else:atom(rec,v,j)
 parts['xl/pivotCache/pivotCacheDefinition1.xml']=xml(cache);parts['xl/pivotCache/pivotCacheRecords1.xml']=xml(records)
 cr=relroot();rel(cr,'rId1','pivotCacheRecords','pivotCacheRecords1.xml');parts['xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels']=xml(cr)
@@ -64,22 +64,6 @@ following={'smartTagPr','smartTagTypes','webPublishing','fileRecoveryPr','webPub
 position=next((i for i,child in enumerate(book) if E.QName(child).localname in following),len(book))
 book.insert(position,pc);parts['xl/workbook.xml']=xml(book)
 br=E.fromstring(parts['xl/_rels/workbook.xml.rels']);rel(br,'rIdPivotCache1','pivotCacheDefinition','pivotCache/pivotCacheDefinition1.xml');parts['xl/_rels/workbook.xml.rels']=xml(br)
-# Preserve the already verified native custom pivot style, remapping its dxf ids.
-styles=E.fromstring(parts['xl/styles.xml']);oldstyles=E.fromstring(template['xl/styles.xml'])
-dxfs=styles.find(q('dxfs'));ts=styles.find(q('tableStyles'))
-if dxfs is None:
- dxfs=E.Element(q('dxfs'),count='0');styles.insert(list(styles).index(ts) if ts is not None else len(styles),dxfs)
-if ts is None:ts=sub(styles,'tableStyles',{'count':'0'})
-custom=deepcopy(next(s for s in oldstyles.find(q('tableStyles')) if s.get('name')=='TitleVisionSummaryBorders'))
-# Revision IDs copied from Excel depend on namespace declarations on its original
-# styleSheet. They are not formatting and must not leak into the new stylesheet.
-for element in custom.iter():
- for attribute in list(element.attrib):
-  if attribute.startswith('{'):del element.attrib[attribute]
-old_dxfs=oldstyles.find(q('dxfs'))
-for item in custom:
- old=int(item.get('dxfId'));item.set('dxfId',str(len(dxfs)));dxfs.append(deepcopy(old_dxfs[old]))
-ts.append(custom);ts.set('count',str(len(ts)));dxfs.set('count',str(len(dxfs)));parts['xl/styles.xml']=xml(styles)
 sheet=E.fromstring(parts['xl/worksheets/sheet1.xml']);sr=relroot()
 ct=E.fromstring(parts['[Content_Types].xml'])
 def override(path,kind):E.SubElement(ct,'{'+C+'}Override',PartName='/'+path,ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.'+kind+'+xml')
@@ -89,12 +73,20 @@ for name,content in template.items():
  if re.fullmatch(r'xl/pivotTables/pivotTable\d+\.xml',name):
   pt=E.fromstring(content);native[pt.get('name')]=pt
 for k,p in enumerate(payload['specs'],1):
- pt=deepcopy(native[p['name']]);
+ pt=deepcopy(next(iter(native.values())))
+ pt.set('name',p['name'])
+ for element in pt.iter():
+  for attribute in list(element.attrib):
+   if attribute.startswith('{'):del element.attrib[attribute]
+ pt.set('rowHeaderCaption',p['title']);pt.set('compact','1');pt.set('compactData','1');pt.set('outline','1');pt.set('outlineData','1')
+ pt.set('applyBorderFormats','0');pt.set('applyWidthHeightFormats','1')
+ style=pt.find(q('pivotTableStyleInfo'));style.set('name','PivotStyleLight16');style.set('showRowStripes','0')
+ dfs=pt.find(q('dataFields'));dfs[0].set('name','Error Counts');dfs[0].set('fld','12');dfs[1].set('name','Sum of Points')
  for stale in list(pt):
-  if E.QName(stale).localname in {'formats','conditionalFormats'}:pt.remove(stale)
+  if E.QName(stale).localname in {'formats','conditionalFormats','extLst'}:pt.remove(stale)
  pt.set('cacheId','1');pt.set('enableDrill','1');pt.set('preserveFormatting','1');pt.set('showMissing','1');pt.set('missingCaption','0')
  col=p['col'];start=p['row'];end=start+p['height']-1
- loc=pt.find(q('location'));loc.set('ref',f'{chr(65+col)}{start}:{chr(67+col)}{end}');loc.set('firstHeaderRow','1');loc.set('firstDataRow','2')
+ loc=pt.find(q('location'));loc.set('ref',f'{chr(65+col)}{start}:{chr(67+col)}{end}');loc.set('firstHeaderRow','0');loc.set('firstDataRow','1')
  pt.find(q('rowFields')).find(q('field')).set('x',str(p['field']))
  pf=pt.find(q('pivotFields'))
  while len(pf)>len(headers):pf.remove(pf[-1])
@@ -103,13 +95,13 @@ for k,p in enumerate(payload['specs'],1):
  for j,f in enumerate(pf):
   for c in list(f):f.remove(c)
   f.attrib.clear();f.set('showAll','0')
-  if j in {1,13}:f.set('dataField','1')
+  if j in {12,13}:f.set('dataField','1')
   if j==p['field']:
-   f.attrib.update({'axis':'axisRow','compact':'0','outline':'0','defaultSubtotal':'0','showAll':'1'})
+   f.attrib.update({'axis':'axisRow','compact':'1','outline':'1','defaultSubtotal':'0','showAll':'1'})
    items=sub(f,'items',{'count':str(len(p['items']))}) if p['items'] else None
    for i,name in enumerate(p['items']):
     attrs={'x':str(i)}
-    if name not in [r[p['field']] or '' for r in rows]:attrs['m']='1'
+    if name not in [r[p['field']] if r[p['field']] is not None else '' for r in rows]:attrs['m']='1'
     sub(items,'item',attrs)
  ri=pt.find(q('rowItems'));ri.clear();ri.set('count',str(len(p['items'])+1))
  for i in range(len(p['items'])):sub(sub(ri,'i'),'x',{'v':str(i)})
@@ -126,6 +118,14 @@ for name,content in list(parts.items()):
   old=E.fromstring(content);ns=E.QName(old).namespace;new=E.Element(old.tag,dict(old.attrib),nsmap={None:ns})
   for c in old:new.append(E.Element(c.tag,dict(c.attrib)))
   parts[name]=xml(new)
+for path,widths in [('xl/worksheets/sheet1.xml',[19.7109375,11.85546875,13.28515625,8.43,15.5703125,11.85546875,13.28515625]),('xl/worksheets/sheet2.xml',payload['widths'])]:
+ sh=E.fromstring(parts[path]);cols=sh.find(q('cols'))
+ for col in list(cols):
+  if int(col.get('min'))<=len(widths):cols.remove(col)
+ for i,width in enumerate(widths,1):
+  cols.insert(i-1,E.Element(q('col'),{'min':str(i),'max':str(i),'width':str(width),'customWidth':'1'}))
+ parts[path]=xml(sh)
+parts['xl/theme/theme1.xml']=(app/'templates/report-theme.xml').read_bytes()
 out=base/'report.xlsx'
 with ZipFile(out,'w',ZIP_DEFLATED) as z:
  for name,content in parts.items():z.writestr(name,content)
@@ -134,11 +134,11 @@ import openpyxl
 v=openpyxl.load_workbook(out,data_only=True);f=openpyxl.load_workbook(out,data_only=False)
 assert v['SP 2'].max_row==max(len(rows)+1,2)
 assert sum(v['SP 2'].cell(i,14).value or 0 for i in range(2,len(rows)+2))==expected_points
-assert len(f['Summary']._pivots)==4
-assert f['SP 2'].freeze_panes=='D2'
+assert len(f['Sheet1']._pivots)==4
+assert f['SP 2'].freeze_panes=='A2'
 assert len(f['SP 2'].data_validations.dataValidation)==1
 for i,r in enumerate(rows,2):
- team=r[3].strip();expected_contributor='Triage' if team=='Triage' else 'VM team' if team=='VM team' else r[18] if team=='Search' else r[20] if team in {'Type','Typing'} else ''
+ team=r[3].strip();expected_contributor=team if team in {'Triage','VM Team','Leadership'} else r[18] if team=='Search' else r[20] if team in {'Type','Typing'} else ''
  override=(payload.get('contributorOverrides') or [None]*len(rows))[i-2]
  if override:expected_contributor=override['name']
  assert (r[22] or '')==(expected_contributor or ''),'Contributor does not follow Team'
@@ -151,8 +151,8 @@ for i,r in enumerate(rows,2):
   if j!=23:assert f['SP 2'].cell(i,j).data_type!='f','Unexpected formula in source data'
 assert len(records)==len(rows) and all(len(r)==len(headers) for r in records)
 for p in payload['specs']:
- assert sum(1 for r in rows if (r[p['field']] or '') in p['items'])==len(rows)
- print(p['name'],p['height'],[(name,sum((r[p['field']] or '')==name for r in rows)) for name in p['items']])
+ assert sum(1 for r in rows if (r[p['field']] if r[p['field']] is not None else '') in p['items'])==len(rows)
+ print(p['name'],p['height'],[(name,sum((r[p['field']] if r[p['field']] is not None else '')==name for r in rows)) for name in p['items']])
 print(f'Validated {len(rows)} source records, {expected_points} points, all formulas, dropdown, 4 native PivotTables and complete drill records.')
 print(out)
 
@@ -162,4 +162,4 @@ with ZipFile(out) as z:
  for name in z.namelist():
   if name.endswith('.xml') or name.endswith('.rels'): E.fromstring(z.read(name))
 assert collection['count']==len(rows)
-(base/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':3,'count':len(rows),'points':expected_points,'pivots':4,'sourceRowsReconciled':True,'formulasVerified':True}),encoding='utf8')
+(base/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':4,'count':len(rows),'points':expected_points,'pivots':4,'sourceRowsReconciled':True,'formulasVerified':True}),encoding='utf8')

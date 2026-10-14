@@ -63,6 +63,19 @@ class ServerTests(unittest.TestCase):
    with server.RunLock():
     with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
    self.assertEqual(save.call_count,1)
+ def test_shared_folder_configuration_requires_same_origin_and_worker_lock(self):
+  path=self.url+'/api/shared/configure';body=json.dumps({'path':r'\\server\share\Reports'}).encode()
+  with patch.object(server.shared_workbook,'configure',return_value=r'\\server\share\Reports') as configure,patch.object(server.shared_workbook,'sync') as sync:
+   req=urllib.request.Request(path,body,headers={'Origin':'https://example.org','X-CSRF-Token':server.TOKEN})
+   with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
+   configure.assert_not_called()
+   req=urllib.request.Request(path,body,headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN})
+   with urllib.request.urlopen(req) as response:self.assertIn('Shared folder saved',json.load(response)['message'])
+   configure.assert_called_once_with(server.DATA,server.db,r'\\server\share\Reports')
+   sync.assert_called_once()
+   with server.RunLock():
+    with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(req)
+   self.assertEqual(configure.call_count,1)
  def test_private_roster_import_requires_csrf_and_updates_state(self):
   path=self.url+'/api/names/import'
   mapping={'schema':2,'search':{'kishorek':{'id':'INV060','name':'Kishore R'}},'type':{'deepikak':{'id':'INV160','name':'Kanna Deepika'}},'legacy':{}}
@@ -97,7 +110,7 @@ class ServerTests(unittest.TestCase):
   for name in ('payload.json','collection.json'):(folder/name).write_text('{}')
   def rebuild(args,directory,**kwargs):
    (directory/'report.xlsx').write_bytes(b'corrected')
-   (directory/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':3}))
+   (directory/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':4}))
   with patch.object(server,'run_process',side_effect=rebuild) as build:
    corrected=server.downloadable_report(folder)
    self.assertEqual(corrected.read_bytes(),b'corrected');self.assertEqual(build.call_count,2)

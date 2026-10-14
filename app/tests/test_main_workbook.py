@@ -29,7 +29,7 @@ class MainWorkbookTests(unittest.TestCase):
         r[10]=(date.fromisoformat(day)-date(1899,12,30)).days+.5
         r[14]=r[15]=int(r[10])
         r[13]=points;r[18]='Example Searcher';r[20]='Example Typer'
-        r[3]='Search' if category=='Searching' else 'Type';r[22]=r[18] if r[3]=='Search' else r[20]
+        r[3]='Search' if category=='Searching' else 'Typing';r[22]=r[18] if r[3]=='Search' else r[20]
         return r
 
     def seed(self,start,end,rows,status='complete'):

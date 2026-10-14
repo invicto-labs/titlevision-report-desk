@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from contextlib import contextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from updater import Updates
-import main_workbook,monthly_sync,manual_edits,name_mapping
+import main_workbook,monthly_sync,manual_edits,name_mapping,shared_workbook
 ROOT=Path(__file__).resolve().parent
 PORTABLE=(ROOT/'portable.json').exists()
 DATA=Path(os.environ.get('TITLEVISION_DATA',Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'TitleVision Report Desk/data' if PORTABLE else ROOT/'data')).resolve();DATA.mkdir(parents=True,exist_ok=True)
@@ -43,12 +43,21 @@ def initialize():
   c.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY,start TEXT,end TEXT,status TEXT,message TEXT,created TEXT,count INTEGER,points REAL,issues INTEGER,scheduled_day TEXT)')
   c.execute('CREATE UNIQUE INDEX IF NOT EXISTS scheduled_once ON runs(scheduled_day) WHERE scheduled_day IS NOT NULL')
   main_workbook.initialize(c)
+  shared_workbook.initialize(c)
   c.execute('CREATE TABLE IF NOT EXISTS main_auto_pending (run_id TEXT PRIMARY KEY, created TEXT NOT NULL)')
 def setting(k,default=None):
  with db() as c:r=c.execute('SELECT value FROM settings WHERE key=?',(k,)).fetchone()
  return json.loads(r[0]) if r else default
 def save_setting(k,v):
  with db() as c:c.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',(k,json.dumps(v)))
+def pull_shared(months):
+ if shared_workbook.configured(db):
+  for month in sorted(set(months)):
+   if month>='2026-09':shared_workbook.pull(ROOT,DATA,db,run_process,month)
+def publish_shared(months):
+ if shared_workbook.configured(db):
+  for month in sorted(set(months)):
+   if month>='2026-09':shared_workbook.publish(DATA,db,month)
 def dpapi(raw,decrypt=False):
  if os.name!='nt':raise ValueError('This local edition stores credentials using Windows encryption. Server deployment needs a secret store.')
  class Blob(ctypes.Structure):_fields_=[('length',ctypes.c_ulong),('data',ctypes.POINTER(ctypes.c_ubyte))]
@@ -137,11 +146,14 @@ def perform(rid,lock):
   for pending_id in pending:
    with db() as c:old=c.execute('SELECT * FROM runs WHERE id=?',(pending_id,)).fetchone()
    if not old or old['status'] not in ('complete','review'):continue
-   checked_months.update(day[:7] for day in main_workbook.days_between(old['start'],old['end']))
+   pending_months={day[:7] for day in main_workbook.days_between(old['start'],old['end'])}
+   checked_months.update(pending_months)
    try:
+    pull_shared(pending_months)
     if monthly_sync.active() and old['start']>=monthly_sync.START.isoformat():
      monthly_sync.add(ROOT,DATA,db,run_process,fetch_month,pending_id)
     else:main_workbook.decide(ROOT,DATA,db,run_process,pending_id,True)
+    publish_shared(pending_months)
     with db() as c:c.execute('DELETE FROM main_auto_pending WHERE run_id=?',(pending_id,))
     if pending_id!=rid:
      try:
@@ -160,7 +172,10 @@ def perform(rid,lock):
    except Exception as error:
     older=[];issues.append({'id':'dispute-list','order':'Earlier Main workbooks','kind':'month_refresh','message':'Could not identify unresolved disputes. '+str(error)[:500]})
    for month in older:
-    try:monthly_sync.refresh(ROOT,DATA,db,run_process,lambda a,b,folder:fetch_month(a,b,folder,rid),month)
+    try:
+     pull_shared([month])
+     monthly_sync.refresh(ROOT,DATA,db,run_process,lambda a,b,folder:fetch_month(a,b,folder,rid),month)
+     publish_shared([month])
     except Exception as error:
      issues.append({'id':'month-'+month,'order':month+' Main workbook','kind':'month_refresh','message':'Earlier disputed errors could not be refreshed; previous workbook retained. '+str(error)[:500]})
   (directory/'issues.json').write_text(json.dumps(issues),encoding='utf8')
@@ -232,15 +247,15 @@ def public_state():
   verified=bool(c.execute("SELECT 1 FROM runs WHERE status IN ('complete','review') LIMIT 1").fetchone())
   main_books=main_workbook.books(c)
  with db() as c:syncs=[dict(r) for r in c.execute('SELECT * FROM main_sync_state ORDER BY month DESC')]
- return {'runs':runs,'mainBooks':main_books,'mainSyncs':syncs,'phase2':{'enabled':monthly_sync.active(),'starts':monthly_sync.START.isoformat(),'currentMonth':monthly_sync.today().strftime('%Y-%m')},'nameMapping':name_mapping.summary(DATA),'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
+ return {'runs':runs,'mainBooks':main_books,'mainSyncs':syncs,'sharedFolder':shared_workbook.configured(db),'phase2':{'enabled':monthly_sync.active(),'starts':monthly_sync.START.isoformat(),'currentMonth':monthly_sync.today().strftime('%Y-%m')},'nameMapping':name_mapping.summary(DATA),'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
 def downloadable_report(folder):
  def ready(directory):
   try:
    checked=json.loads((directory/'validation.json').read_text(encoding='utf8'))
-   return checked.get('passed') and checked.get('workbookFormatVersion')==3 and (directory/'report.xlsx').is_file()
+   return checked.get('passed') and checked.get('workbookFormatVersion')==4 and (directory/'report.xlsx').is_file()
   except (OSError,ValueError):return False
  if ready(folder):return folder/'report.xlsx'
- corrected=folder/'workbook-v3'
+ corrected=folder/'workbook-v4'
  if ready(corrected):return corrected/'report.xlsx'
  with RunLock():
   if UPDATES.busy():raise ValueError('The app is updating. Download the report after it restarts.')
@@ -298,7 +313,9 @@ class Handler(BaseHTTPRequestHandler):
     content=self.rfile.read(length)
     with RunLock():
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
+     pull_shared([month])
      result=manual_edits.save(ROOT,DATA,db,run_process,month,content)
+     publish_shared([month])
     return self.send(200,result)
    if p=='/api/names/import':
     if length<=0 or length>128*1024:raise ValueError('Choose an employee mapping JSON file smaller than 128 KB.')
@@ -309,6 +326,20 @@ class Handler(BaseHTTPRequestHandler):
     return self.send(200,result)
    if length<=0 or length>8192:raise ValueError('Request too large')
    obj=json.loads(self.rfile.read(length))
+   if p=='/api/shared/configure':
+    with RunLock():
+     if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
+     path=shared_workbook.configure(DATA,db,obj.get('path'))
+     with db() as c:months=[r['month'] for r in main_workbook.books(c) if r['month']>='2026-09']
+     shared_workbook.sync(ROOT,DATA,db,run_process,months)
+    return self.send(200,{'message':f'Shared folder saved. {len(months)} Main workbook(s) synchronized.','path':path})
+   if p=='/api/shared/sync':
+    with RunLock():
+     if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
+     if not shared_workbook.configured(db):raise ValueError('Choose a shared folder first.')
+     with db() as c:months=[r['month'] for r in main_workbook.books(c) if r['month']>='2026-09']
+     shared_workbook.sync(ROOT,DATA,db,run_process,months)
+    return self.send(200,{'message':f'Synchronized {len(months)} shared Main workbook(s).'})
    if p.startswith('/api/runs/') and p.endswith('/main'):
     chunks=p.split('/')
     if len(chunks)!=5:raise ValueError('Invalid report URL')
@@ -316,23 +347,31 @@ class Handler(BaseHTTPRequestHandler):
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
      if type(obj.get('add')) is not bool:raise ValueError('Invalid main workbook choice')
      with db() as c:r=c.execute('SELECT start,end FROM runs WHERE id=?',(chunks[3],)).fetchone()
+     months=[day[:7] for day in main_workbook.days_between(r['start'],r['end'])] if r else []
+     if obj['add']:pull_shared(months)
      if obj['add'] and monthly_sync.active() and r and r['start']>=monthly_sync.START.isoformat():
       result=monthly_sync.add(ROOT,DATA,db,run_process,fetch_month,chunks[3])
      else:result=main_workbook.decide(ROOT,DATA,db,run_process,chunks[3],obj['add'])
+     if obj['add']:publish_shared(months)
     return self.send(200,result)
    if p in ('/api/main/create','/api/main/delete','/api/main/refresh'):
     month=obj.get('month')
     if not isinstance(month,str):raise ValueError('Choose a workbook month')
     with RunLock():
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
-     if p.endswith('/create'):result=monthly_sync.create(ROOT,DATA,db,run_process,month)
+     if p.endswith('/create'):
+      result=monthly_sync.create(ROOT,DATA,db,run_process,month)
+      publish_shared([month])
      elif p.endswith('/delete'):
+      if shared_workbook.configured(db):raise ValueError('A shared Main workbook cannot be deleted here. Ask the report owner to archive it first.')
       if obj.get('confirm') is not True:raise ValueError('Confirm removal of this monthly workbook. Daily reports will be kept.')
       result=monthly_sync.delete(DATA,db,month)
      else:
       with db() as c:exists=c.execute('SELECT 1 FROM main_books WHERE month=?',(month,)).fetchone()
       if not exists:raise ValueError('Create or add to this monthly workbook first.')
+      pull_shared([month])
       monthly_sync.refresh(ROOT,DATA,db,run_process,fetch_month,month)
+      publish_shared([month])
       with db() as c:result={'books':main_workbook.books(c),'message':'Month-to-date statuses and points verified; PivotTables rebuilt.'}
     return self.send(200,result)
    if p=='/api/run':return self.send(202,{'id':launch_run(obj['start'],obj['end'])})

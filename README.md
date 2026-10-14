@@ -1,5 +1,21 @@
 # TitleVision Report Desk
 
+## Shared team workbook
+
+One designated Windows PC runs collection and keeps its SQLite database,
+TitleVision sign-in, and verified source evidence locally. In the dashboard,
+set a reachable Windows network folder under **Shared team workbook**. The app
+publishes one current Excel workbook per month there. Teammates open the same
+file from the share and edit it one person at a time.
+
+Before a monthly rebuild, the report PC imports saved Team and contributor
+corrections through the verified Excel edit path. It then writes a validated
+workbook to a temporary file in the share and replaces the current copy only
+when that copy has not changed or been opened in Excel. **Sync now** imports
+edits without collecting a new report. If the share is unavailable or a file
+has conflicting changes, the app keeps the previous shared copy and reports
+the issue. Do not point four separate app instances at a shared SQLite file.
+
 Windows application for collecting and validating TitleVision's latest completed workdays'
 error report. It includes contributor history lookup, editable Search/Type/Triage/
 VM team attribution, bordered Excel reports and native PivotTables. Routine runs

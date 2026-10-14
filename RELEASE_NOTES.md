@@ -1,3 +1,13 @@
+## Version 1.4.11
+
+- Match the approved Excel reference: SP 2 with 27 columns, compact bordered rows, orange headers, and native Names, Status, Team and Points PivotTables. Exclude RVSI.
+- Offer Search, Typing, Triage, VM Team and Leadership in the Team dropdown; preserve saved contributor overrides and historical Team labels.
+- Keep zero-point errors in the Points summary and preserve full native PivotTable drill-down records.
+
+- Let one designated report PC publish each verified monthly Main workbook to a shared Windows network folder. Four teammates can edit that same Excel file one person at a time.
+- Before the next report, status refresh, or manual sync, import saved Team/Searcher/Typer/Final Contributor corrections through the existing verified workbook-edit path. Keep local source evidence and credentials on the report PC.
+- Refuse to overwrite a workbook that is open, missing, unrecognized, or changed during a refresh. Keep the prior shared file and show a retryable review issue if publication cannot finish.
+
 ## Version 1.4.10
 
 - Complete a report when multiple products overlap a date-only Error Committed Date but every candidate has the same verified completed Search and Typing usernames. Keep an explicit product-review issue, and leave the contributor blank when no matching human task exists. Still stop if candidate histories disagree or a product date is invalid.

@@ -1,48 +1,48 @@
-"""Redistributable workbook writer. Native pivots and independent validation follow in finish.py."""
+"""Portable writer matching the approved SP 2 reference; finish.py adds native pivots."""
 from pathlib import Path
-import json,sys,math
+import json, sys
 import xlsxwriter
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import report_layout
+
 
 def build(folder):
  folder=Path(folder)
  payload=json.loads((folder/'payload.json').read_text(encoding='utf8'))
  collection=json.loads((folder/'collection.json').read_text(encoding='utf8'))
- headers,*rows=payload['data'];widths=payload.get('widths') or json.loads((Path(__file__).resolve().parents[1]/'templates/layout.json').read_text(encoding='utf8'))['widths'];n=len(rows)
- editable='editIds' in payload
- if editable:
-  assert len(payload['editIds'])==n and len(set(payload['editIds']))==n
- title=collection['start'] if collection['start']==collection['end'] else collection['start']+' to '+collection['end']
+ layout=json.loads((Path(__file__).resolve().parents[1]/'templates/layout.json').read_text(encoding='utf8'))
+ rows=report_layout.current_rows(payload['data'][0],payload['data'][1:])
+ if 'contributorOverrides' in payload:
+  payload['contributorOverrides']=[report_layout.normalize_override(o) for o in payload['contributorOverrides']]
+ payload.update(data=[report_layout.HEADERS,*rows],specs=report_layout.pivot_specs(rows),widths=layout['widths'])
+ (folder/'payload.json').write_text(json.dumps(payload),encoding='utf8')
+ headers=payload['data'][0];n=len(rows);editable='editIds' in payload
+ if editable:assert len(payload['editIds'])==n and len(set(payload['editIds']))==n
  wb=xlsxwriter.Workbook(folder/'base.xlsx',{'strings_to_formulas':False,'strings_to_urls':False})
- summary=wb.add_worksheet('Summary');sheet=wb.add_worksheet('SP 2')
+ summary=wb.add_worksheet('Sheet1');sheet=wb.add_worksheet('SP 2')
  if editable:
   meta=wb.add_worksheet('_ReportDesk');meta.write('A1','Month');meta.write('B1',payload['editMonth']);meta.write('A2','Revision');meta.write('B2',payload['editRevision']);meta.very_hidden()
- navy='#17365D';formats={}
+ formats={}
  def fmt(**kw):
-  props={'font_name':'Arial','font_size':10,'font_color':'#1F2937','text_wrap':True,'valign':'vcenter',**kw}
+  props={'font_name':'Calibri','font_size':11,'font_color':'#000000','border':1,'border_color':'#000000',**kw}
   key=tuple(sorted(props.items()))
   if key not in formats:formats[key]=wb.add_format(props)
   return formats[key]
- border={'border':1,'border_color':'#404040'}
- header=fmt(**border,bg_color=navy,font_color='#FFFFFF',bold=True,align='center')
- for sh in (sheet,summary):sh.hide_gridlines(2);sh.set_tab_color(navy)
- for j,width in enumerate(widths):sheet.set_column(j,j,width)
- sheet.freeze_panes(1,3);sheet.set_row(0,44)
- # Add the table before writing cells so cached formula values are preserved.
- sheet.add_table(0,0,max(n,1),27 if editable else 26,{'name':payload['tableName'],'style':None,'columns':[{'header':h,'header_format':header} for h in [*headers,*(['TitleVision Error ID'] if editable else [])]]})
+ header=fmt(font_size=14,bold=True,bg_color='#F4B084')
+ # XlsxWriter adds 5/7 character padding; finish.py sets the precise reference widths.
+ for j,width in enumerate(layout['widths']):sheet.set_column(j,j,width-5/7)
+ sheet.freeze_panes(1,0);sheet.set_row(0,18.75)
+ sheet.add_table(0,0,max(n,1),27 if editable else 26,{'name':payload['tableName'],'style':None,'banded_rows':False,'autofilter':False,'columns':[{'header':h,'header_format':header} for h in [*headers,*(['TitleVision Error ID'] if editable else [])]]})
  if editable:sheet.set_column(27,27,18,None,{'hidden':True})
  for i,row in enumerate(rows or [[None]*27],1):
-  maxlines=1
   for j,value in enumerate(row):
-   opts=dict(border)
-   if i%2:opts['bg_color']='#EDF2F7'
-   if j in (7,8,24,26):opts['valign']='top'
-   if j in (10,14,15):opts['num_format']='m/d/yyyy h:mm:ss AM/PM' if j==10 else 'm/d/yyyy'
-   if j==13:opts.update(num_format='0',align='right')
-   if j==3:opts.update(bg_color='#FFF2CC',align='center')
+   opts={}
+   if j in (10,14,15):opts['num_format']='mm-dd-yy'
+   if j>=24:opts.update(align='center',valign='vcenter')
    cellformat=fmt(**opts)
    if j==22:
     r=i+1
-    formula=f'=IF(TRIM(D{r})="Triage","Triage",IF(TRIM(D{r})="VM team","VM team",IF(TRIM(D{r})="Search",IF(S{r}="","",S{r}),IF(OR(TRIM(D{r})="Type",TRIM(D{r})="Typing"),IF(U{r}="","",U{r}),""))))'
+    formula=f'=IF(TRIM(D{r})="Triage","Triage",IF(TRIM(D{r})="Leadership","Leadership",IF(TRIM(D{r})="VM Team","VM Team",IF(TRIM(D{r})="Search",IF(S{r}="","",S{r}),IF(OR(TRIM(D{r})="Type",TRIM(D{r})="Typing"),IF(U{r}="","",U{r}),"")))))'
     override=(payload.get('contributorOverrides') or [None]*n)[i-1] if n else None
     if override:
      team=override['team'].replace('"','""');name=override['name'].replace('"','""')
@@ -50,40 +50,22 @@ def build(folder):
     code=sheet.write_formula(i,j,formula,cellformat,value or '')
    else:code=sheet.write(i,j,value,cellformat)
    if code:raise ValueError('Excel cell write failed; report withheld')
-   maxlines=max(maxlines,sum(max(1,math.ceil(len(part)/max(1,widths[j]*0.85))) for part in str(value or '').split('\n')))
-  sheet.set_row(i,min(409,max(52,maxlines*14+12)))
   if editable and i<=n:sheet.write_string(i,27,payload['editIds'][i-1])
- sheet.data_validation(1,3,max(n,1),3,{'validate':'list','source':['Search','Type','Triage','VM team'],'error_type':'stop','error_title':'Choose a team','error_message':'Select Search, Type, Triage or VM team.'})
- summary.set_default_row(25)
- for j,width in enumerate([25,14,15,4,23,14,15,4,23,14,15]):summary.set_column(j,j,width)
- heading='TitleVision Error Report — '+title
- if collection.get('mainMonth'):
-  from datetime import date
-  heading=date.fromisoformat(collection['mainMonth']+'-01').strftime('%B %Y')+' Main Workbook'
- summary.merge_range('A2:K2',heading,fmt(bold=True,font_size=14,font_color=navy))
- summary.set_row(1,34)
+ sheet.data_validation(1,3,max(n,1),3,{'validate':'list','source':list(report_layout.TEAMS),'error_type':'stop','error_title':'Choose a team','error_message':'Select Search, Typing, Triage, VM Team or Leadership.'})
+ for j,width in enumerate([19.7109375,11.85546875,13.28515625,8.43,15.5703125,11.85546875,13.28515625]):summary.set_column(j,j,width-5/7)
  for p in payload['specs']:
-  matrix=[['','Values',''],[p['title'],'Error Count','Error Points']]
+  matrix=[[p['title'],'Error Counts','Sum of Points']]
   for item in p['items']:
-   match=[r for r in rows if (r[p['field']] or '')==item]
-   matrix.append([item or '(blank)',len(match),sum(r[13] for r in match)])
-  matrix.append(['Grand Total',n,collection['points']])
+   match=[r for r in rows if (r[p['field']] if r[p['field']] is not None else '')==item]
+   matrix.append([item if item!='' else '(blank)',sum(r[12] not in (None,'') for r in match),sum(r[13] for r in match)])
+  matrix.append(['Grand Total',sum(r[12] not in (None,'') for r in rows),collection['points']])
   for i,row in enumerate(matrix):
-   r=p['row']-1+i;summary.set_row(r,32 if i<2 else 28 if i==len(matrix)-1 else 25)
    for j,value in enumerate(row):
-    props=dict(border)
-    if i<2:props.update(bg_color=navy,font_color='#FFFFFF',bold=True,align='center')
-    else:
-     props['align']='right' if j else 'left'
-     if i==len(matrix)-1:props.update(bg_color='#DCE6F1',bold=True)
-    summary.write(r,p['col']+j,value,fmt(**props))
- notes=max(25,*(p['row']+p['height']+2 for p in payload['specs'] if p['col']>0))
- texts=[(0,'Double-click a PivotTable count or points total to open its full records.'),(2,'After changing Team, select Data → Refresh All to update the PivotTables.'),(4,'Team options: Search, Type, Triage, VM team.'),(6,'(blank) means no team or contributor is assigned. A blank Typer means no human typing task was recorded.'),(8,'Source: TitleVision All Errors, created '+title+'.')]
- if collection.get('mainMonth'):
-  texts[-1]=(8,'Only verified collected days are included. Status and points checked through '+collection['syncThrough']+'.' if collection.get('syncThrough') else 'Empty monthly workbook. Run a verified daily report to begin.')
- for offset,text in texts:
-  r=notes+offset-1;summary.merge_range(r,4,r,10,text,fmt(**border));summary.set_row(r,42 if offset==6 else 34)
+    opts={'align':'center','valign':'vcenter'} if j else {'align':'left'}
+    if i==0:opts.update(bold=True,bg_color='#D9E2F3')
+    elif i==len(matrix)-1:opts['bg_color']='#D9D9D9'
+    summary.write(p['row']-1+i,p['col']+j,value,fmt(**opts))
  wb.close()
- print(f'Built {n} rows using the portable workbook writer.')
+ print(f'Built {n} rows using the approved reference layout.')
 
 if __name__=='__main__':build(sys.argv[1])

@@ -25,7 +25,7 @@ export function sourceErrorId(links,orderUrl){
  if(ids.size>1)throw Error('Conflicting source error identities');
  return [...ids][0]||null;
 }
-export function teamFor(r){const category=r[6].trim(),sub=r[7].trim();if(/\btriage\b/i.test(sub)||/^triage$/i.test(category))return 'Triage';if(/^VM team$/i.test(category)||/^VM team$/i.test(sub))return 'VM team';return category==='Searching'?'Search':category==='Typing'?'Type':'';}
+export function teamFor(r){const category=r[6].trim(),sub=r[7].trim();if(/\btriage\b/i.test(sub)||/^triage$/i.test(category))return 'Triage';if(/^VM team$/i.test(category)||/^VM team$/i.test(sub))return 'VM Team';return category==='Searching'?'Search':category==='Typing'?'Typing':'';}
 export function selectProduct(products,row){
  const clean=s=>String(s??'').replace(/\u00a0/g,' ').trim();
  const matching=products.filter(p=>clean(p.name)===clean(row[9]));

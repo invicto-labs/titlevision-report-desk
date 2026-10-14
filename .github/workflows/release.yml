@@ -56,6 +56,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Status history mapping tests failed' }
           python app/tests/test_main_workbook.py
           if ($LASTEXITCODE -ne 0) { throw 'Main workbook continuity tests failed' }
+          python app/tests/test_shared_workbook.py
+          if ($LASTEXITCODE -ne 0) { throw 'Shared workbook safety tests failed' }
           python app/tests/test_monthly_sync.py
           if ($LASTEXITCODE -ne 0) { throw 'Monthly status refresh tests failed' }
           python app/tests/test_name_mapping.py
