@@ -18,3 +18,5 @@ select:focus-visible,button:focus-visible,a:focus-visible,summary:focus-visible{
 @media(max-width:600px){main{padding:22px 16px}.overview-heading{align-items:flex-start;flex-direction:column;gap:16px}.month-picker{width:100%}.overview{padding:20px 16px}.overview .section-title{display:block}.overview .muted{display:block;margin-top:8px}.overview-actions>a,.overview-actions>button{flex:1;text-align:center;font-size:12px;padding:10px}.team-table td{padding:13px 12px}.disclosure>.panel,.disclosure>.workspace{margin:0 12px 16px}.disclosure>summary{padding:17px}.settings-grid{grid-template-columns:1fr}.main-controls label{max-width:100%;width:100%}}
 
 .team-table th:not(:first-child),.team-table td:not(:first-child){text-align:right;font-variant-numeric:tabular-nums;width:24%}.team-table tbody td:not(:first-child){font-weight:600}
+
+.operation-bar{display:flex;align-items:center;gap:16px;justify-content:space-between}.operation-bar .hint{flex:1}.stop-button{color:#a52b31;border-color:#d9a9ac;flex-shrink:0}.badge.cancelled{background:#edf0f3;color:#526171}

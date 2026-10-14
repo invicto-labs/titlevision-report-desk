@@ -66,6 +66,18 @@ class SharedWorkbookTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing from the shared folder'):
             shared.publish(self.place, self.db, self.month)
 
+    def test_stop_before_replace_retains_shared_workbook_and_removes_staging_file(self):
+        from operation_control import Cancelled
+        shared.publish(self.place, self.db, self.month)
+        self.local.write_bytes(b'new verified workbook')
+        previous = shared.expected(self.db, self.month)
+        with patch('operation_control.check_cancelled', side_effect=Cancelled()):
+            with self.assertRaises(Cancelled):
+                shared.publish(self.place, self.db, self.month)
+        self.assertEqual(self.target.read_bytes(), b'first validated workbook')
+        self.assertEqual(shared.expected(self.db, self.month), previous)
+        self.assertEqual(list(self.place.glob('*.tmp')), [])
+
     def test_existing_unknown_file_is_never_replaced(self):
         self.target.write_bytes(b'someone else owns this workbook')
         with self.assertRaisesRegex(ValueError, 'not published by this app'):

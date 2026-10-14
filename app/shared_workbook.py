@@ -163,6 +163,8 @@ def publish(data, db, month):
             closed(path)
             if digest(path.read_bytes()) != (previous or digest(new)):
                 raise ValueError('The shared workbook changed during publishing. Sync again.')
+        from operation_control import check_cancelled
+        check_cancelled()
         try:
             staged.replace(path)
         except OSError as exc:

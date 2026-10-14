@@ -189,6 +189,16 @@ class MonthlySyncTests(unittest.TestCase):
    with self.assertRaises(ValueError):sync.refresh(ROOT,self.data,self.db,build if mode=='build' else self.build,fetch,'2026-10')
    self.assertEqual(self.book()[0],before)
    with self.db() as c:self.assertEqual(main.books(c)[0]['syncStatus'],'failed')
+ def test_stop_before_publication_retains_verified_monthly_revision(self):
+  from operation_control import Cancelled
+  s=self.source(1,'2026-10-01');self.live=[s];rid=self.seed('2026-10-01','2026-10-01',[s]);self.add(rid);before=self.book()[0]
+  def stopped_fetch(a,b,f):raise Cancelled()
+  with self.assertRaises(Cancelled):sync.refresh(ROOT,self.data,self.db,self.build,stopped_fetch,'2026-10')
+  self.assertEqual(self.book()[0],before)
+  with self.db() as c:self.assertEqual(main.books(c)[0]['syncStatus'],'cancelled')
+  with patch.object(sync,'check_cancelled',side_effect=[None,Cancelled()]):
+   with self.assertRaises(Cancelled):sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
+  self.assertEqual(self.book()[0],before)
  def test_invalid_changed_or_duplicate_identity_is_not_guessed(self):
   for mode in ['missing-id','duplicate-id','changed-order','tampered-export']:
    with self.subTest(mode=mode):

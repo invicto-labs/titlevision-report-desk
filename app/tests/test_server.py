@@ -46,6 +46,86 @@ class ServerTests(unittest.TestCase):
   self.assertFalse(server.worker_busy())
   with server.RunLock():self.assertTrue(server.public_state()['activity']['busy'])
   self.assertFalse(server.public_state()['activity']['busy'])
+ def test_stop_token_is_specific_and_repeated_stop_is_safe(self):
+  from operation_control import Controller
+  with server.RunLock(cancellable=True) as lock:
+   token=lock.operation
+   self.assertEqual(server.activity_state()['operationId'],token)
+   with self.assertRaises(urllib.error.HTTPError) as error:self.post('/api/operation/stop',{'operationId':'0'*32})
+   self.assertEqual(error.exception.code,400);self.assertFalse(server.OPERATIONS.requested())
+   # A different controller models the desktop talking to a scheduled process.
+   Controller(server.DATA).request(token)
+   self.assertTrue(server.OPERATIONS.requested())
+   with self.post('/api/operation/stop',{'operationId':token}) as response:self.assertEqual(response.status,202)
+   self.assertTrue(server.activity_state()['stopping'])
+  with server.RunLock(cancellable=True):
+   with self.assertRaises(urllib.error.HTTPError):self.post('/api/operation/stop',{'operationId':token})
+   self.assertFalse(server.OPERATIONS.requested())
+  with self.post('/api/operation/stop',{'operationId':token}) as response:self.assertIn('finished',json.load(response)['message'])
+ def test_stop_requires_csrf(self):
+  with server.RunLock(cancellable=True) as lock:
+   request=urllib.request.Request(self.url+'/api/operation/stop',json.dumps({'operationId':lock.operation}).encode(),headers={'Origin':'https://example.org','X-CSRF-Token':server.TOKEN})
+   with self.assertRaises(urllib.error.HTTPError):urllib.request.urlopen(request)
+   self.assertFalse(server.OPERATIONS.requested())
+ def test_stop_terminates_owned_child_and_preserves_workbook_and_other_process(self):
+  import subprocess,time
+  ready=threading.Event();errors=[];folder=server.DATA/'cancel-test';folder.mkdir(exist_ok=True)
+  saved=folder/'saved.xlsx';saved.write_bytes(b'previous verified workbook')
+  unrelated=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])
+  def work():
+   try:
+    with server.RunLock(cancellable=True):
+     server.run_process([sys.executable,'-u','-c','import time;print("{\\"ready\\":true}",flush=True);time.sleep(60)'],folder,progress=lambda event:ready.set())
+   except Exception as error:errors.append(error)
+  worker=threading.Thread(target=work);worker.start()
+  try:
+   self.assertTrue(ready.wait(10))
+   with self.post('/api/operation/stop',{'operationId':server.activity_state()['operationId']}) as response:self.assertEqual(response.status,202)
+   worker.join(12);self.assertFalse(worker.is_alive())
+   self.assertEqual(len(errors),1);self.assertIsInstance(errors[0],server.Cancelled)
+   self.assertIsNone(unrelated.poll());self.assertEqual(saved.read_bytes(),b'previous verified workbook')
+   self.assertFalse(server.worker_busy())
+   with server.RunLock(cancellable=True):server.run_process([sys.executable,'-c','print("new run")'],folder)
+  finally:
+   unrelated.terminate();unrelated.wait(timeout=10);worker.join(65)
+ def test_cancelled_daily_collection_keeps_schedule_marker_without_retry(self):
+  with patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=server.Cancelled()):
+   rid=server.launch_run('2026-01-01','2026-01-01',scheduled_day='2026-01-02',background=False)
+  try:
+   with server.db() as c:
+    run=c.execute('SELECT * FROM runs WHERE id=?',(rid,)).fetchone()
+    self.assertEqual(run['status'],'cancelled');self.assertEqual(run['scheduled_day'],'2026-01-02')
+    self.assertIsNone(c.execute('SELECT * FROM main_auto_pending WHERE run_id=?',(rid,)).fetchone())
+   self.assertFalse(server.worker_busy())
+  finally:
+   with server.db() as c:c.execute('DELETE FROM runs WHERE id=?',(rid,))
+ def test_overlap_returns_progress_without_starting_second_refresh(self):
+  month='2026-06'
+  server.monthly_sync.state(server.db,month,'running','Checking status comments 17 of 42')
+  try:
+   with server.RunLock(),patch.object(server.monthly_sync,'refresh') as refresh:
+    with self.assertRaises(urllib.error.HTTPError) as error:self.post('/api/main/refresh',{'month':month})
+    self.assertEqual(error.exception.code,409)
+    result=json.load(error.exception)
+    self.assertEqual(result['code'],'worker_busy');self.assertTrue(result['activity']['busy'])
+    self.assertIn('17 of 42',result['error']);refresh.assert_not_called()
+  finally:
+   with server.db() as c:c.execute('DELETE FROM main_sync_state WHERE month=?',(month,))
+  self.assertFalse(server.worker_busy())
+ def test_old_running_label_does_not_keep_worker_busy(self):
+  month='2026-05'
+  server.monthly_sync.state(server.db,month,'running','Old interrupted progress')
+  try:self.assertEqual(server.activity_state(),{'busy':False,'message':''})
+  finally:
+   with server.db() as c:c.execute('DELETE FROM main_sync_state WHERE month=?',(month,))
+ def test_failed_operation_releases_lock_for_next_request(self):
+  with patch.object(server.shared_workbook,'configured',return_value='test-share'),patch.object(server.shared_workbook,'sync',side_effect=ValueError('Source unavailable')):
+   with self.assertRaises(urllib.error.HTTPError) as error:self.post('/api/shared/sync',{})
+   self.assertEqual(error.exception.code,400)
+  self.assertFalse(server.worker_busy())
+  with patch.object(server.shared_workbook,'configured',return_value='test-share'),patch.object(server.shared_workbook,'sync') as sync:
+   with self.post('/api/shared/sync',{}) as response:self.assertEqual(response.status,200)
+   sync.assert_called_once()
  def test_static_health_state_and_unknown_routes(self):
   for path in ('/','/app.js','/style.css','/favicon.svg','/api/health','/api/state'):
    with urllib.request.urlopen(self.url+path) as response:self.assertEqual(response.status,200);self.assertEqual(response.headers['Cache-Control'],'no-store')

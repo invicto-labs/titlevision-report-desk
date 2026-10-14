@@ -13,6 +13,7 @@ import manual_edits
 import name_mapping
 from reconcile import canonical
 from status_history import fields as status_fields
+from operation_control import check_cancelled,Cancelled
 
 START=date(2026,9,1)
 IST=timezone(timedelta(hours=5,minutes=30))
@@ -143,6 +144,7 @@ def disputed_months(data,db,exclude=()):
   if any(row[0]=='Disputed' for row in payload['data'][1:]):result.append(month)
  return result
 def refresh(root,data,db,run_process,fetch,month):
+ check_cancelled()
  first=guard(month);end=min(today()-timedelta(days=1),first.replace(day=calendar.monthrange(first.year,first.month)[1]))
  if end<first:raise ValueError('No completed day is available in this month yet.')
  state(db,month,'running','Checking month-to-date statuses and points before rebuilding PivotTables')
@@ -157,11 +159,14 @@ def refresh(root,data,db,run_process,fetch,month):
    rows,audit=overlay(records(root,data,db,month,selected),current,name_mapping.load(data))
    rows,overrides=manual_edits.apply(rows,audit,manual_edits.load(db,month))
    book=prepare(root,data,run_process,month,days,rows,audit,end.isoformat(),checked,overrides)
+  check_cancelled()
   with db() as c:
    if book:c.execute('INSERT OR REPLACE INTO main_books VALUES (?,?,?,?,?,?,?,?)',book)
    c.execute('INSERT OR REPLACE INTO main_snapshots VALUES (?,?,?,?)',(month,str(folder.relative_to(data)),end.isoformat(),checked))
    c.execute('INSERT OR REPLACE INTO main_sync_state VALUES (?,?,?,?)',(month,'current','Latest status and points verified',checked))
   return {'month':month,'through':end.isoformat(),'checkedAt':checked,'current':current}
+ except Cancelled as error:
+  state(db,month,'cancelled',str(error));raise
  except Exception as error:
   state(db,month,'failed',str(error)[:700]);raise
 def create(root,data,db,run_process,month):
@@ -206,9 +211,12 @@ def add(root,data,db,run_process,fetch,rid):
    rows,overrides=manual_edits.apply(rows,audit,manual_edits.load(db,month))
    included=sorted(d for d in selected if d.startswith(month+'-'))
    prepared.append(prepare(root,data,run_process,month,included,rows,audit,snapshot['through'],snapshot['checkedAt'],overrides))
+  except Cancelled as error:
+   state(db,month,'cancelled',str(error));raise
   except Exception as error:
    state(db,month,'failed',str(error)[:700]);raise
  # The included-date mapping and all new rows publish together, after every affected month passes.
+ check_cancelled()
  with db() as c:
   c.executemany('INSERT OR REPLACE INTO main_books VALUES (?,?,?,?,?,?,?,?)',prepared)
   c.executemany('INSERT OR REPLACE INTO main_days VALUES (?,?)',[(day,rid) for day in days])

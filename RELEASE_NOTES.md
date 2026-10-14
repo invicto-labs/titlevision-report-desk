@@ -1,3 +1,15 @@
+## Version 1.4.16
+
+- Add Stop process beside active collection/monthly-refresh progress. Stop only that operation's subprocess tree, keep the worker lock until cleanup finishes, and retain previously verified reports and workbook revisions.
+- Support stop requests across the desktop and scheduled worker. Bind each request to its operation ID so delayed clicks cannot stop a later run; cancelled scheduled runs are not automatically restarted that day.
+- Show Stopping and Stopped states, block incomplete monthly publication, and allow another run after cleanup.
+
+## Version 1.4.15
+
+- Disable conflicting workbook/report controls as soon as a request starts, including across subsequent state checks. Old interrupted run labels no longer leave controls disabled when the worker is idle.
+- Return an explicit busy response with the current operation's progress when requests overlap; show it as an informational message and keep it updated until the worker finishes. Preserve exclusive workbook access and existing validation.
+- Keep saved workbook downloads, count refresh and Get update available during collection. Test duplicate clicks, concurrent refresh requests, stale labels and lock release after failures.
+
 ## Version 1.4.14
 
 - Register installed copies in Windows Installed apps with the current version and an uninstaller. Uninstall stops idle managed engines, removes the schedule and installed versions, and preserves local report data, settings and shared workbooks. Refuse removal while a report/update is active or installed paths contain links.

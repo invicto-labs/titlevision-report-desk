@@ -8,10 +8,12 @@ from contextlib import contextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from updater import Updates
 import main_workbook,monthly_sync,manual_edits,name_mapping,shared_workbook,dashboard
+from operation_control import configure,check_cancelled,Cancelled
 ROOT=Path(__file__).resolve().parent
 PORTABLE=(ROOT/'portable.json').exists()
 DATA=Path(os.environ.get('TITLEVISION_DATA',Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'TitleVision Report Desk/data' if PORTABLE else ROOT/'data')).resolve();DATA.mkdir(parents=True,exist_ok=True)
 PORT=int(os.environ.get('TITLEVISION_PORT','8765'));IST=timezone(timedelta(hours=5,minutes=30));TOKEN=secrets.token_urlsafe(32)
+OPERATIONS=configure(DATA)
 NODE=Path(os.environ.get('TITLEVISION_NODE',ROOT.parent/'runtime/node/node.exe' if PORTABLE else Path.home()/'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'))
 CREATE_NO_WINDOW=0x08000000 if os.name=='nt' else 0
 class ReportHTTPServer(ThreadingHTTPServer):
@@ -51,10 +53,12 @@ def setting(k,default=None):
 def save_setting(k,v):
  with db() as c:c.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',(k,json.dumps(v)))
 def pull_shared(months):
+ check_cancelled()
  if shared_workbook.configured(db):
   for month in sorted(set(months)):
    if month>='2026-09':shared_workbook.pull(ROOT,DATA,db,run_process,month)
 def publish_shared(months):
+ check_cancelled()
  if shared_workbook.configured(db):
   for month in sorted(set(months)):
    if month>='2026-09':shared_workbook.publish(DATA,db,month)
@@ -76,7 +80,11 @@ def store_credentials(username,password):
 UPDATES=Updates(ROOT,DATA,dpapi,lambda:worker_busy())
 def update(rid,**values):
  with db() as c:c.execute('UPDATE runs SET '+','.join(k+'=?' for k in values)+' WHERE id=?',(*values.values(),rid))
+class WorkerBusy(ValueError):
+ def __init__(self):super().__init__('Another report or workbook operation is in progress.')
+
 class RunLock:
+ def __init__(self,cancellable=False,probe=False):self.cancellable=cancellable;self.operation=None;self.probe=probe
  def __enter__(self):
   self.file=open(DATA/'worker.lock','a+b');self.file.seek(0)
   try:
@@ -84,14 +92,37 @@ class RunLock:
     import msvcrt;msvcrt.locking(self.file.fileno(),msvcrt.LK_NBLCK,1)
    else:
     import fcntl;fcntl.flock(self.file,fcntl.LOCK_EX|fcntl.LOCK_NB)
-  except OSError:self.file.close();raise ValueError('A report or workbook refresh is already running. Wait for it to finish.')
+  except OSError:self.file.close();raise WorkerBusy()
+  try:
+   if self.cancellable:self.operation=OPERATIONS.begin()
+   elif not self.probe:OPERATIONS.clear_stale()
+  except Exception:self.file.close();raise
   return self
- def __exit__(self,*args):self.file.close()
+ def __exit__(self,*args):
+  try:
+   if self.operation:
+    try:
+     if OPERATIONS.requested():
+      with db() as c:c.execute("UPDATE main_sync_state SET status='cancelled',message=? WHERE status='running'",(str(Cancelled()),))
+    finally:OPERATIONS.end(self.operation)
+  finally:self.file.close()
 
 def worker_busy():
  try:
-  with RunLock():return False
+  with RunLock(probe=True):return False
  except (ValueError,OSError):return True
+
+def activity_state(busy=None):
+ if busy is None:busy=worker_busy()
+ if not busy:return {'busy':False,'message':''}
+ with db() as c:
+  run=c.execute("SELECT message FROM runs WHERE status IN ('queued','running') ORDER BY created DESC LIMIT 1").fetchone()
+  sync=c.execute("SELECT month,message,updated FROM main_sync_state WHERE status='running' ORDER BY updated DESC LIMIT 1").fetchone()
+ # The file lock is authoritative; old database labels alone must not block work.
+ message=run['message'] if run else (f"{sync['month']} workbook: {sync['message']}" if sync else 'Preparing or saving the workbook.')
+ operation=OPERATIONS.read()
+ stopping=bool(operation and OPERATIONS.marker(operation['id']).exists())
+ return {'busy':True,'message':'Stopping the process…' if stopping else message,'operationId':operation['id'] if operation else None,'cancellable':bool(operation),'stopping':stopping}
 def date_range(start,end):
  if not isinstance(start,str) or not isinstance(end,str):raise ValueError('Choose valid From and Through dates.')
  a=date.fromisoformat(start);b=date.fromisoformat(end)
@@ -99,11 +130,22 @@ def date_range(start,end):
  if b>=datetime.now(IST).date():raise ValueError('Select a completed day, up to yesterday.')
  return a.isoformat(),b.isoformat()
 def run_process(args,directory,stdin=None,progress=None,artifact_export=False):
+ check_cancelled()
  p=subprocess.Popen([str(x) for x in args],cwd=ROOT,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding='utf8',errors='replace',creationflags=CREATE_NO_WINDOW)
  def stop():
-  if os.name=='nt':subprocess.run(['taskkill','/PID',str(p.pid),'/T','/F'],capture_output=True,creationflags=CREATE_NO_WINDOW)
+  if os.name=='nt':subprocess.run(['taskkill','/PID',str(p.pid),'/T','/F'],capture_output=True,creationflags=CREATE_NO_WINDOW,timeout=10)
   else:p.kill()
- timer=threading.Timer(2700,stop);timer.start();lines=[]
+ finished=threading.Event()
+ def watch():
+  deadline=time.monotonic()+2700
+  while not finished.wait(.2):
+   if OPERATIONS.requested() or time.monotonic()>=deadline:
+    if p.poll() is None:
+     try:stop()
+     except (OSError,subprocess.TimeoutExpired):pass
+     finished.wait(1)
+    else:return
+ monitor=threading.Thread(target=watch,daemon=True);monitor.start();lines=[]
  try:
   if stdin:p.stdin.write(json.dumps(stdin))
   p.stdin.close()
@@ -116,6 +158,7 @@ def run_process(args,directory,stdin=None,progress=None,artifact_export=False):
     except (ValueError,TypeError):pass
   code=p.wait()
   with open(directory/'execution.log','a',encoding='utf8') as f:f.write('\n'.join(lines)+'\n')
+  check_cancelled()
   if code and artifact_export and os.name=='nt' and code in (1,3221226505,-1073740791):
    # The bundled renderer can fail during native shutdown after successful export.
    # Accept only a completed export with its exact hash; independent XLSX validation still follows.
@@ -124,7 +167,10 @@ def run_process(args,directory,stdin=None,progress=None,artifact_export=False):
     receipt=json.loads(marker.read_text(encoding='utf8'));actual=hashlib.sha256((directory/'base.xlsx').read_bytes()).hexdigest()
     if receipt['sha256']==actual:code=0
   if code:raise ValueError(next((json.loads(l).get('message') for l in reversed(lines) if l.startswith('{') and '"failed"' in l),None) or ('Report step failed. '+ '\n'.join(lines[-4:])[:600]))
- finally:timer.cancel()
+ finally:
+  finished.set();monitor.join(timeout=10)
+  for stream in (p.stdin,p.stdout):
+   if stream and not stream.closed:stream.close()
 def perform(rid,lock):
  directory=DATA/'runs'/rid;directory.mkdir(parents=True,exist_ok=True)
  try:
@@ -171,6 +217,7 @@ def perform(rid,lock):
         temp=old_issues_file.with_suffix('.tmp');temp.write_text(json.dumps(remaining),encoding='utf8');temp.replace(old_issues_file)
         update(pending_id,status='review' if remaining else 'complete',message=f'{len(remaining)} item(s) need review' if remaining else 'Main workbook updated',issues=len(remaining))
      except (OSError,ValueError,sqlite3.Error):pass
+   except Cancelled:raise
    except Exception as error:
     issues.append({'id':'auto-main-'+pending_id,'order':old['start']+' to '+old['end'],'kind':'month_refresh','message':'Daily report is available; Main workbook update is pending and will retry on the next run. '+str(error)[:500]})
   if monthly_sync.active():
@@ -182,10 +229,19 @@ def perform(rid,lock):
      pull_shared([month])
      monthly_sync.refresh(ROOT,DATA,db,run_process,lambda a,b,folder:fetch_month(a,b,folder,rid),month)
      publish_shared([month])
+    except Cancelled:raise
     except Exception as error:
      issues.append({'id':'month-'+month,'order':month+' Main workbook','kind':'month_refresh','message':'Earlier disputed errors could not be refreshed; previous workbook retained. '+str(error)[:500]})
+  check_cancelled()
   (directory/'issues.json').write_text(json.dumps(issues),encoding='utf8')
   update(rid,status='review' if issues else 'complete',message=f'{len(issues)} item(s) need review' if issues else 'All report checks passed',count=checks['count'],points=checks['points'],issues=len(issues))
+ except Cancelled as e:
+  # A verified daily download may already exist while its monthly refresh stops.
+  with db() as c:current=c.execute('SELECT status FROM runs WHERE id=?',(rid,)).fetchone()
+  ready=current and current['status'] in ('complete','review')
+  update(rid,status='review' if ready else 'cancelled',message=str(e))
+  if not ready:
+   with db() as c:c.execute('DELETE FROM main_auto_pending WHERE run_id=?',(rid,))
  except Exception as e:
   message=str(e)[:900]
   try:message=message.replace(credentials()['password'],'[redacted]')
@@ -202,7 +258,7 @@ def fetch_month(start,end,folder,rid=None):
  run_process([sys.executable,ROOT/'reconcile.py',folder],folder)
 def launch_run(start,end,scheduled_day=None,background=True):
  if UPDATES.busy():raise ValueError('An application update is in progress. Run the report after it finishes.')
- start,end=date_range(start,end);credentials();lock=RunLock();lock.__enter__()
+ start,end=date_range(start,end);credentials();lock=RunLock(cancellable=True);lock.__enter__()
  try:
   # Any running record left while the process lock is free was interrupted.
   if UPDATES.busy():raise ValueError('An application update is queued or in progress. Run the report after it finishes.')
@@ -255,9 +311,8 @@ def public_state():
   verified=bool(c.execute("SELECT 1 FROM runs WHERE status IN ('complete','review') LIMIT 1").fetchone())
   main_books=main_workbook.books(c)
  with db() as c:syncs=[dict(r) for r in c.execute('SELECT * FROM main_sync_state ORDER BY month DESC')]
- busy=worker_busy()
- message=next((r['message'] for r in runs if r['status'] in ('queued','running')),None) or next((s['message'] for s in syncs if s['status']=='running'),None) or 'A workbook operation is in progress.'
- return {'activity':{'busy':busy,'message':message if busy else ''},'runs':runs,'mainBooks':main_books,'mainSyncs':syncs,'sharedFolder':shared_workbook.configured(db),'phase2':{'enabled':monthly_sync.active(),'starts':monthly_sync.START.isoformat(),'currentMonth':monthly_sync.today().strftime('%Y-%m')},'nameMapping':name_mapping.summary(DATA),'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
+ activity=activity_state()
+ return {'activity':activity,'runs':runs,'mainBooks':main_books,'mainSyncs':syncs,'sharedFolder':shared_workbook.configured(db),'phase2':{'enabled':monthly_sync.active(),'starts':monthly_sync.START.isoformat(),'currentMonth':monthly_sync.today().strftime('%Y-%m')},'nameMapping':name_mapping.summary(DATA),'verifiedLive':verified,'credentialsSaved':(DATA/'credentials.dpapi').exists(),'schedule':setting('schedule',False),'time':'08:45','timezone':'Asia/Kolkata','yesterday':(datetime.now(IST).date()-timedelta(days=1)).isoformat(),'csrf':TOKEN,'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'repository':UPDATES.config['repository'],'update':UPDATES.status(),'githubAccessSaved':(DATA/'github-update.dpapi').exists(),'processId':os.getpid()}
 def downloadable_report(folder):
  def ready(directory):
   try:
@@ -280,6 +335,10 @@ def downloadable_report(folder):
  return corrected/'report.xlsx'
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*a):pass
+ def send_busy(self):
+  activity=activity_state()
+  message=('Work is already in progress. '+activity['message']+' Follow its progress above; no second operation was started.') if activity['busy'] else 'The previous operation has just finished. You can try again now.'
+  return self.send(409,{'code':'worker_busy','error':message,'activity':activity})
  def send(self,code,body,kind='application/json'):
   if not isinstance(body,bytes):body=json.dumps(body).encode()
   self.send_response(code);self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(body)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'");self.end_headers();self.wfile.write(body)
@@ -324,6 +383,7 @@ class Handler(BaseHTTPRequestHandler):
    if p not in files:return self.send(404,{'error':'Not found'})
    kind={'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/favicon.svg':'image/svg+xml'}[p]
    self.send(200,(ROOT/'public'/files[p]).read_bytes(),kind)
+  except WorkerBusy:self.send_busy()
   except (ValueError,OSError,sqlite3.Error) as e:self.send(400,{'error':str(e)})
  def do_POST(self):
   try:
@@ -349,6 +409,9 @@ class Handler(BaseHTTPRequestHandler):
    if length<=0 or length>8192:raise ValueError('Request too large')
    obj=json.loads(self.rfile.read(length))
    if not isinstance(obj,dict):raise ValueError('Request must be a JSON object.')
+   if p=='/api/operation/stop':
+    if not worker_busy():return self.send(200,{'message':'The operation has already finished.'})
+    return self.send(202,OPERATIONS.request(obj.get('operationId')))
    if p=='/api/shared/configure':
     with RunLock():
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
@@ -380,7 +443,7 @@ class Handler(BaseHTTPRequestHandler):
    if p in ('/api/main/create','/api/main/delete','/api/main/refresh'):
     month=obj.get('month')
     if not isinstance(month,str):raise ValueError('Choose a workbook month')
-    with RunLock():
+    with RunLock(cancellable=p.endswith('/refresh')):
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
      if p.endswith('/create'):
       result=monthly_sync.create(ROOT,DATA,db,run_process,month)
@@ -419,6 +482,8 @@ class Handler(BaseHTTPRequestHandler):
     if obj['enabled']:credentials()
     install_schedule(obj['enabled']);return self.send(200,{'enabled':obj['enabled']})
    return self.send(404,{'error':'Not found'})
+  except Cancelled:self.send(200,{'cancelled':True,'message':str(Cancelled())})
+  except WorkerBusy:self.send_busy()
   except (ValueError,KeyError,sqlite3.Error,subprocess.SubprocessError,OSError) as e:self.send(400,{'error':str(e)})
 if __name__=='__main__':
  initialize()
