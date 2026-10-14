@@ -38,6 +38,7 @@ function display(user,role,id,order){
 }
 const details=source.map(({values:r,id,statusFields,statusHistory})=>{
  const p=staff[id];if(!p)throw Error('Missing verified order '+r[1]);const team=teamFor(r);
+ if(p.equivalentProducts?.length>1)issues.push({id,order:r[1],kind:'equivalent_product_histories',message:`${p.equivalentProducts.length} products overlap Error Committed Date. Their completed Search and Typing usernames agree; review the product if additional attribution is needed.`});
  if((team==='Search'&&!p.names[0])||(team==='Type'&&!p.names[1]))issues.push({id,order:r[1],kind:'missing_name',message:`No completed human ${team==='Search'?'Search':'Typing'} task was recorded. Contributor left blank.`});
  if(/\b(?:VM|triage)\b/i.test(r[8])&&!['Triage','VM team'].includes(team))issues.push({id,order:r[1],kind:'cause_review',message:'Notes mention VM or triage. Review the cause before overriding Team.'});
  const searcher=display(p.names[0],'Search',id,r[1]),typer=display(p.names[1],'Type',id,r[1]);

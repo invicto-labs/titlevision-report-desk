@@ -58,7 +58,13 @@ export function selectProduct(products,row){
  }catch{dated=[];}
  if(dated.length===1)return {product:dated[0],method:'Only matching product whose work period overlaps Error Committed Date'};
  const error=Error(`Ambiguous product: ${matching.length} matching, ${active.length} non-cancelled. Error Committed Date did not identify one product. Review required.`);
- error.code='AMBIGUOUS_PRODUCT';throw error;
+ error.code='AMBIGUOUS_PRODUCT';error.candidates=dated.length>1?dated:[];throw error;
+}
+export function equivalentTaskNames(histories){
+ if(!Array.isArray(histories)||histories.length<2)throw Error('Multiple verified product histories are required');
+ const names=histories.map(taskNames),first=names[0];
+ if(names.some(pair=>pair[0]!==first[0]||pair[1]!==first[1]))throw Error('Ambiguous products have different completed Search or Typing users');
+ return first;
 }
 export function taskNames(rows){let task='';const candidates=[[],[]];
  for(const r of rows){if(r.length!==6)continue;task=r[1].trim()||task;const user=r[3].trim();const kind=['Search','AESearch','UpdateSearch'].includes(task)?0:task==='TypingModule'?1:-1;

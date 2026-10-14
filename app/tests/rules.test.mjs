@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {plusDays,serial,selectProduct,taskNames,teamFor,validateRows,rowId,sourceErrorId,validateErrorGrid,EXPORT_HEADERS} from '../rules.mjs';
+import {plusDays,serial,selectProduct,taskNames,equivalentTaskNames,teamFor,validateRows,rowId,sourceErrorId,validateErrorGrid,EXPORT_HEADERS} from '../rules.mjs';
 test('TitleVision explicit empty table has no normal headers and is valid only on the first unpaged result',()=>{
  const grid={headers:[],rows:[],pages:[],empty:true};assert.doesNotThrow(()=>validateErrorGrid(grid,1));
  assert.throws(()=>validateErrorGrid(grid,2));assert.throws(()=>validateErrorGrid({...grid,pages:[{text:'2'}]},1));
@@ -66,6 +66,20 @@ test('duplicate exact EPON restricts date matching to those candidates',()=>{
  const {row,products}=repeatedUpdates();products[0].external=row[18];products[1].external=row[18];assert.throws(()=>selectProduct(products,row));
  row[17]='3/19/2026';assert.equal(selectProduct(products,row).product,products[1]);
  products[0].cancelled='2/3/2026';products[1].cancelled='3/20/2026';assert.equal(selectProduct(products,row).product,products[1]);
+});
+test('same-day product ambiguity can be reviewed by identical completed task attribution',()=>{
+ const row=Array(20).fill('');row[9]='ClientReview';row[17]='9/14/2026';row[18]='vendor-number';
+ const products=[
+  {name:'ClientReview',external:'-003',arrival:'6/24/2026 4:27:16 PM',completed:'6/25/2026 6:22:38 PM',cancelled:''},
+  {name:'ClientReview',external:'-004',arrival:'9/14/2026 7:15:23 AM',completed:'9/14/2026 8:21:13 AM',cancelled:''},
+  {name:'ClientReview',external:'-005',arrival:'9/14/2026 8:38:38 AM',completed:'9/14/2026 9:01:10 AM',cancelled:''}
+ ];
+ let error;try{selectProduct(products,row);}catch(e){error=e;}
+ assert.equal(error.code,'AMBIGUOUS_PRODUCT');assert.deepEqual(error.candidates,products.slice(1));
+ const history=user=>[['','CRSP2','9/14/2026 7:15:23 AM',user,'9/14/2026 7:40:28 AM','9/14/2026 8:21:10 AM']];
+ assert.deepEqual(equivalentTaskNames([history('First_ADSSearchType'),history('Second_ADSSearchType')]),['','']);
+ const search=user=>[['','Search','9/14/2026 7:15:23 AM',user,'9/14/2026 7:40:28 AM','9/14/2026 8:21:10 AM']];
+ assert.throws(()=>equivalentTaskNames([search('First_ADSSearchType'),search('Second_ADSSearchType')]),/different completed/);
 });
 
 test('cancelled historical product regression retains earlier error with vendor EPON mismatch',()=>{

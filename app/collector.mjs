@@ -1,7 +1,7 @@
 import {chromium} from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {siteDate,plusDays,rowId,selectProduct,taskNames,validateRows,sourceErrorId,validateErrorGrid} from './rules.mjs';
+import {siteDate,plusDays,rowId,selectProduct,taskNames,equivalentTaskNames,validateRows,sourceErrorId,validateErrorGrid} from './rules.mjs';
 import {readStatusHistory} from './status_history.mjs';
 let input='';for await(const c of process.stdin)input+=c;const job=JSON.parse(input);input='';
 const dir=path.resolve(job.directory);const emit=(phase,message,extra={})=>console.log(JSON.stringify({phase,message,...extra}));
@@ -94,6 +94,22 @@ try{
  }
  if(!job.exportOnly){
  const detail=await context.newPage();detail.setDefaultTimeout(30000);detail.setDefaultNavigationTimeout(60000);const staff={};const cache=new Map();
+ const readProduct=async(product,row,tv,client)=>{
+  const key=row.url+'|'+product.href;
+  if(cache.has(key))return cache.get(key);
+  const match=product.href.match(/^javascript:showUtilityControlsWFI\('([a-f0-9-]{36})'\);\s*$/i);if(!match)throw Error('Unrecognized product task link');
+  const tasks=new URL('/Tasks.aspx',BASE);tasks.searchParams.set('PublicOrderId',new URL(row.url).searchParams.get('PublicOrderId'));tasks.searchParams.set('wfiid',match[1]);await detail.goto(tasks.href,{referer:row.url});
+  await detail.locator('#OrderWorkflowTasks1_RadGrid1_ctl00').waitFor();
+  const history=await detail.locator('#OrderWorkflowTasks1_RadGrid1_ctl00').evaluate(t=>{
+   const headers=[...t.querySelectorAll('th')].map(c=>c.innerText.trim());const labels=['Task','Avail','User','Start','End'];
+   if(labels.some(label=>headers.filter(h=>h===label).length!==1))return {headers,rows:[]};
+   const ix=labels.map(label=>headers.indexOf(label));
+   const rows=[...t.querySelectorAll('tr')].filter(r=>!r.querySelector('th')&&r.cells.length>Math.max(...ix)).map(r=>['',...ix.map(i=>r.cells[i].innerText.replace(/\u00a0/g,' ').trim())]);
+   return {headers,rows};
+  });
+  if(!history.rows.length)throw Error('Task history missing or changed');
+  const result={tv,client,names:taskNames(history.rows),history:history.rows,product,orderUrl:row.url};cache.set(key,result);return result;
+ };
  await fs.writeFile(path.join(dir,'staff.json'),JSON.stringify(staff,null,2));
  for(let i=0;i<rows.length;i++){
   const row=rows[i],v=row.values;emit('history',`Checking ${i+1} of ${rows.length}: ${v[1]}`,{done:i,total:rows.length});
@@ -112,24 +128,17 @@ try{
    const products=await detail.locator('#ctl00_ContentPlaceHolder1_grdWorkflowInstances_ctl00').evaluate((t,ix)=>[...t.querySelectorAll('tr')].filter(r=>r.querySelector('a[href*="showUtilityControlsWFI"]')).map(r=>{const c=[...r.cells].map(c=>c.innerText.trim());const a=r.querySelector('a[href*="showUtilityControlsWFI"]');return {name:a.innerText.trim(),href:a.getAttribute('href'),external:c[ix['External Product Number']],originator:c[ix['Originator Product Number']],arrival:c[ix['Arrival Time']],completed:c[ix['Completed Time']],cancelled:c[ix['Cancelled Time']]};}),indexes);
    let selected;
    try{selected=selectProduct(products,v);}catch(e){
-    if(e.code==='AMBIGUOUS_PRODUCT')await fs.writeFile(path.join(dir,'product-review.json'),JSON.stringify({rowId:row.id,order:v[1],orderUrl:row.url,product:v[9],epon:v[18],errorCommittedDate:v[17],products,message:e.message},null,2));
-    throw e;
+    if(e.code==='AMBIGUOUS_PRODUCT'){
+     await fs.writeFile(path.join(dir,'product-review.json'),JSON.stringify({rowId:row.id,order:v[1],orderUrl:row.url,product:v[9],epon:v[18],errorCommittedDate:v[17],products,candidates:e.candidates,message:e.message},null,2));
+     if(e.candidates?.length>1){
+      const candidates=[];for(const product of e.candidates)candidates.push(await readProduct(product,row,tv,client));
+      try{equivalentTaskNames(candidates.map(item=>item.history));}catch{throw e;}
+      verified={...candidates[0],selection:'Multiple same-day products have identical completed Search and Typing users',equivalentProducts:e.candidates};
+     }
+    }
+    if(!verified)throw e;
    }
-   const key=row.url+'|'+selected.product.href;
-   if(cache.has(key))verified={...cache.get(key),selection:selected.method};else{
-    const match=selected.product.href.match(/^javascript:showUtilityControlsWFI\('([a-f0-9-]{36})'\);\s*$/i);if(!match)throw Error('Unrecognized product task link');
-    const tasks=new URL('/Tasks.aspx',BASE);tasks.searchParams.set('PublicOrderId',new URL(row.url).searchParams.get('PublicOrderId'));tasks.searchParams.set('wfiid',match[1]);await detail.goto(tasks.href,{referer:row.url});
-    await detail.locator('#OrderWorkflowTasks1_RadGrid1_ctl00').waitFor();
-    const history=await detail.locator('#OrderWorkflowTasks1_RadGrid1_ctl00').evaluate(t=>{
-     const headers=[...t.querySelectorAll('th')].map(c=>c.innerText.trim());const labels=['Task','Avail','User','Start','End'];
-     if(labels.some(label=>headers.filter(h=>h===label).length!==1))return {headers,rows:[]};
-     const ix=labels.map(label=>headers.indexOf(label));
-     const rows=[...t.querySelectorAll('tr')].filter(r=>!r.querySelector('th')&&r.cells.length>Math.max(...ix)).map(r=>['',...ix.map(i=>r.cells[i].innerText.replace(/\u00a0/g,' ').trim())]);
-     return {headers,rows};
-    });
-    if(!history.rows.length)throw Error('Task history missing or changed');
-    verified={tv,client,names:taskNames(history.rows),history:history.rows,product:selected.product,selection:selected.method,orderUrl:row.url};cache.set(key,verified);
-   }
+   if(selected)verified={...await readProduct(selected.product,row,tv,client),selection:selected.method};
    break;
   }catch(e){lastError=e;if(/Ambiguous product|Conflicting latest/.test(e.message))break;}
   if(!verified)throw Error(`${v[1]}: ${lastError?.message||'History unavailable'}`);staff[row.id]=verified;

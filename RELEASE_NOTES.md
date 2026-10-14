@@ -1,3 +1,8 @@
+## Version 1.4.10
+
+- Complete a report when multiple products overlap a date-only Error Committed Date but every candidate has the same verified completed Search and Typing usernames. Keep an explicit product-review issue, and leave the contributor blank when no matching human task exists. Still stop if candidate histories disagree or a product date is invalid.
+- Resolve the 13 October 2026 TELSIX101-10863200 case without guessing between its two same-day ClientReview products. The source export has 31 errors and 49 points; this order remains flagged because neither review product records a completed TypingModule task.
+
 ## Version 1.4.9
 
 - Place the editable Team dropdown in column D where TraceQ used to be. Remove the old Team column and keep the Final Error Contributor formula, saved corrections, status columns and four PivotTables working. Previously verified report snapshots are converted when they are added or refreshed.
