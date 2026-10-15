@@ -1,3 +1,22 @@
+## Version 1.4.20
+
+- Make existing error status refresh manual through Check latest error status. Daily collections append verified errors and preserve the latest saved decisions; they no longer trigger month-wide or older-dispute refreshes.
+- Keep five verified local database backups and display a repair-required message for database corruption instead of describing it as a connection failure. Never restore or replace a live database automatically.
+- Skip comment popups for Accepted, Auto-Accepted and New errors. Reuse verified histories for unchanged Disputed, Chargeable and Non-Chargeable statuses; fetch when the status changes or no valid saved history exists.
+- Seed the cache from existing reconciled snapshots and key it by native error ID and order identity. Keep the latest observed status so a status reverting after another observed status requires a new history check.
+- Continue verifying the full source export, refreshing points and preserving saved contributor edits. Comments added without a status change are intentionally not rechecked.
+
+## Version 1.4.19
+
+- Give dashboard state reads 30 seconds and explain timeouts in plain language instead of showing the browser's raw abort message. Continue read polling without repeating report or refresh submissions.
+- Clear connection warnings after recovery, pause conflicting controls while state is unavailable, and retain unrelated action messages.
+- Handle disconnected browser requests without attempting a second response on the closed socket.
+
+## Version 1.4.18
+
+- Recognize older monthly workbooks moved into the shared folder's Archive subfolder. Keep future syncs and saved-edit checks on the archived file without recreating a second top-level copy.
+- Stop for review if a month exists in both locations, preserving both files until the authoritative copy is selected.
+
 ## Version 1.4.17
 
 - Add Viewer PC mode for teammates to connect to the same network folder and display monthly team errors, points and latest-date summaries without collecting reports locally.

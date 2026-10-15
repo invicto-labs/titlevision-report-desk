@@ -73,3 +73,31 @@ test('viewer setup selection survives polling until submitted',()=>{
  assert.equal(h.element('shared-path').readOnly,false);
  assert.equal(h.element('shared-save').textContent,'Connect viewer');
 });
+
+test('a slow read reports a plain timeout and never resubmits an action',async()=>{
+ const h=harness();let timers=0,calls=0;
+ h.context.setTimeout=(fn,ms)=>{timers++;assert.equal(ms,30000);queueMicrotask(fn);return {unref(){}};};
+ h.context.clearTimeout=()=>{};
+ h.context.fetch=(url,options)=>{calls++;return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(Object.assign(new Error('signal is aborted without reason'),{name:'AbortError'}))));};
+ await assert.rejects(h.run("api('/api/state')"),error=>error.code==='request_timeout'&&/Retrying automatically/.test(error.message)&&!error.message.includes('signal'));
+ assert.equal(calls,1);assert.equal(timers,1);
+ h.context.fetch=async()=>{calls++;throw new TypeError('Failed to fetch');};
+ await assert.rejects(h.run("api('/api/run',{start:'2026-10-14',end:'2026-10-14'})"),/Failed to fetch/);
+ assert.equal(calls,2);assert.equal(timers,1);
+});
+
+test('poll recovery clears only its own warning and restores safe controls',async()=>{
+ const h=harness();
+ h.context.fetch=async()=>{throw new TypeError('Failed to fetch');};
+ assert.equal(await h.run('refresh()'),false);
+ assert.match(h.element('notice').textContent,/temporarily unavailable/);
+ assert.equal(h.element('run').disabled,true);
+ const healthy=h.run('JSON.parse(JSON.stringify(state))');
+ h.context.fetch=async()=>({ok:true,json:async()=>healthy});
+ assert.equal(await h.run('refresh()'),true);
+ assert.equal(h.element('notice').hidden,true);
+ assert.equal(h.element('run').disabled,false);
+ h.run("connectionFailed(Object.assign(Error('Retrying automatically'),{code:'request_timeout'}));notice('Your saved changes were accepted.');");
+ await h.run('refresh()');
+ assert.equal(h.element('notice').textContent,'Your saved changes were accepted.');
+});

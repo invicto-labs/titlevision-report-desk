@@ -13,8 +13,8 @@ ACCEPTED={'Accepted','Auto-Accepted'}
 def fields(record,required=False):
  values=record['values'];status=values[0];history=record.get('statusHistory')
  if not history:
-  if required and status!='New':raise ValueError('Status comment history is missing; collect these dates again')
-  return ['','','','']
+  if required and status not in ACCEPTED|{'New'}:raise ValueError('Status comment history is missing; collect these dates again')
+  return [status if status in ACCEPTED else '','','','']
  schema=history.get('schema')
  if schema not in (1,2):raise ValueError('Status comment history schema changed')
  order=parse_qs(urlparse(record['url']).query).get('PublicOrderId',[''])[0]

@@ -66,6 +66,33 @@ class SharedWorkbookTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing from the shared folder'):
             shared.publish(self.place, self.db, self.month)
 
+    def test_archived_month_stays_archived_after_sync_and_preserves_edit_checks(self):
+        shared.publish(self.place, self.db, self.month)
+        archive = self.place / 'Archive'
+        archive.mkdir()
+        archived = archive / self.target.name
+        self.target.rename(archived)
+        self.assertIsNone(shared.pull(self.place, self.place, self.db, None, self.month))
+        self.local.write_bytes(b'new verified month')
+        self.assertEqual(shared.publish(self.place, self.db, self.month), str(archived))
+        self.assertFalse(self.target.exists())
+        self.assertEqual(archived.read_bytes(), b'new verified month')
+        archived.write_bytes(b'new teammate correction')
+        with self.assertRaisesRegex(ValueError, 'changed during refresh'):
+            shared.publish(self.place, self.db, self.month)
+        self.assertEqual(archived.read_bytes(), b'new teammate correction')
+
+    def test_two_shared_copies_require_review_instead_of_choosing_one(self):
+        shared.publish(self.place, self.db, self.month)
+        archive = self.place / 'Archive'
+        archive.mkdir()
+        archived = archive / self.target.name
+        archived.write_bytes(b'another report copy')
+        with self.assertRaisesRegex(ValueError, 'both the shared folder and Archive'):
+            shared.publish(self.place, self.db, self.month)
+        self.assertEqual(archived.read_bytes(), b'another report copy')
+        self.assertEqual(self.target.read_bytes(), b'first validated workbook')
+
     def test_stop_before_replace_retains_shared_workbook_and_removes_staging_file(self):
         from operation_control import Cancelled
         shared.publish(self.place, self.db, self.month)

@@ -75,6 +75,23 @@ class MonthlySyncTests(unittest.TestCase):
    sync.create(ROOT,self.data,self.db,self.build,'2026-10')
    with self.assertRaisesRegex(ValueError,'No completed day'):sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
   self.assertEqual(self.fetches,[])
+ def test_daily_append_never_fetches_month_and_retains_last_manually_checked_status(self):
+  first=self.source(1,'2026-10-01',status='New');self.live=[copy.deepcopy(first)]
+  self.add(self.seed('2026-10-01','2026-10-01',[first]))
+  self.live[0]['values'][0]='Non-Chargeable';self.live[0]['values'][15]='0'
+  sync.refresh(ROOT,self.data,self.db,self.build,self.fetch,'2026-10')
+  before=len(self.fetches)
+  second=self.source(2,'2026-10-02',points=2,status='Accepted')
+  rid=self.seed('2026-10-02','2026-10-02',[second])
+  sync.add(ROOT,self.data,self.db,self.build,self.fetch,rid,refresh_existing=False)
+  _,rows=self.book()
+  self.assertEqual(len(self.fetches),before)
+  self.assertEqual(len(rows),2)
+  self.assertEqual(rows[0][0],'Non-Chargeable');self.assertEqual(rows[0][13],0)
+  self.assertEqual(rows[0][23:27],['Disputed','Our reply','Non-Chargeable','Client reply'])
+  self.assertEqual(rows[1][0],'Accepted');self.assertEqual(rows[1][13],2)
+  sync.add(ROOT,self.data,self.db,self.build,self.fetch,rid,refresh_existing=False)
+  self.assertEqual(len(self.book()[1]),2);self.assertEqual(len(self.fetches),before)
  def test_september_refresh_and_friday_to_sunday_month_boundary(self):
   september=self.source(11,'2026-09-30');october=self.source(12,'2026-10-01')
   self.live=[september,october]

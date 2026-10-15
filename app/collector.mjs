@@ -2,7 +2,7 @@ import {chromium} from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {siteDate,plusDays,rowId,selectProduct,taskNames,equivalentTaskNames,validateRows,sourceErrorId,validateErrorGrid} from './rules.mjs';
-import {readStatusHistory} from './status_history.mjs';
+import {readStatusHistory,planStatusHistory} from './status_history.mjs';
 let input='';for await(const c of process.stdin)input+=c;const job=JSON.parse(input);input='';
 const dir=path.resolve(job.directory);const emit=(phase,message,extra={})=>console.log(JSON.stringify({phase,message,...extra}));
 const BASE='https://tv.datatracetitle.com';let browser,activePage;const network=[];
@@ -78,11 +78,13 @@ try{
  }
  // Monthly export-only snapshots also need fresh comments. Key each popup by
  // native error ID; orders may have several distinct errors on different days.
- const statusRows=rows.filter(r=>r.values[0]!=='New');
+ const previousHistories=job.historyCache?JSON.parse(await fs.readFile(job.historyCache,'utf8')):{};
+ const historyPlan=planStatusHistory(rows,previousHistories),statusRows=historyPlan.fetch;
+ emit('history',`Status comparison: ${statusRows.length} new or changed histories to check; ${historyPlan.reused} unchanged reused; ${historyPlan.skipped} Accepted/New skipped`);
  if(statusRows.length){
   const statusPage=await context.newPage();statusPage.setDefaultNavigationTimeout(60000);
   for(let i=0;i<statusRows.length;i++){
-   const row=statusRows[i];emit('history',`Checking status comments ${i+1} of ${statusRows.length}: ${row.values[1]}`);
+   const row=statusRows[i];emit('history',`Checking new or changed status comments ${i+1} of ${statusRows.length}: ${row.values[1]}`);
    let lastError;
    for(let attempt=0;attempt<2;attempt++)try{
     activePage=statusPage;row.statusHistory=await readStatusHistory(statusPage,row,job.username);break;
@@ -90,8 +92,8 @@ try{
    if(!row.statusHistory)throw Error(`${row.values[1]}: ${lastError?.message||'Status comments unavailable'}`);
   }
   await statusPage.close();activePage=page;
-  await fs.writeFile(path.join(dir,'source.json'),JSON.stringify(rows,null,2));
  }
+ await fs.writeFile(path.join(dir,'source.json'),JSON.stringify(rows,null,2));
  if(!job.exportOnly){
  const detail=await context.newPage();detail.setDefaultTimeout(30000);detail.setDefaultNavigationTimeout(60000);const staff={};const cache=new Map();
  const readProduct=async(product,row,tv,client)=>{
@@ -146,5 +148,5 @@ try{
  }
  }
  if(exportFailure)throw Error(exportFailure+' Report withheld until the source export can be verified.');
- await fs.writeFile(path.join(dir,'collection.json'),JSON.stringify({start:job.start,end:job.end,...totals,statusHistoryVersion:2,collectedAt:new Date().toISOString(),pages:pageNo},null,2));emit('collected','Collection complete',totals);
+ await fs.writeFile(path.join(dir,'collection.json'),JSON.stringify({start:job.start,end:job.end,...totals,statusHistoryVersion:2,statusHistoryPolicy:'changed-status-only',statusHistoryChecks:{fetched:statusRows.length,reused:historyPlan.reused,skipped:historyPlan.skipped},collectedAt:new Date().toISOString(),pages:pageNo},null,2));emit('collected','Collection complete',totals);
 }catch(e){try{await fs.writeFile(path.join(dir,'diagnostic.json'),JSON.stringify({network,text:await activePage?.locator('body').innerText()},null,2));await activePage?.screenshot({path:path.join(dir,'failure.png'),fullPage:true});}catch{}emit('failed',String(e.message).split('\n')[0].replace(/https:\/\/login\.[^\s]+/g,'[login page]'));process.exitCode=1;}finally{await browser?.close();}

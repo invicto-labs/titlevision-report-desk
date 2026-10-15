@@ -9,6 +9,8 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 from updater import Updates
 import main_workbook,monthly_sync,manual_edits,name_mapping,shared_workbook,dashboard
 import shared_view
+import history_cache
+import database_backup
 from operation_control import configure,check_cancelled,Cancelled
 ROOT=Path(__file__).resolve().parent
 PORTABLE=(ROOT/'portable.json').exists()
@@ -48,6 +50,11 @@ def initialize():
   main_workbook.initialize(c)
   shared_workbook.initialize(c)
   c.execute('CREATE TABLE IF NOT EXISTS main_auto_pending (run_id TEXT PRIMARY KEY, created TEXT NOT NULL)')
+ backup_database()
+
+def backup_database():
+ try:database_backup.create(DATA)
+ except (OSError,ValueError,sqlite3.Error) as error:print('Database backup unavailable: '+str(error),file=sys.stderr,flush=True)
 def setting(k,default=None):
  with db() as c:r=c.execute('SELECT value FROM settings WHERE key=?',(k,)).fetchone()
  return json.loads(r[0]) if r else default
@@ -107,7 +114,9 @@ class RunLock:
      if OPERATIONS.requested():
       with db() as c:c.execute("UPDATE main_sync_state SET status='cancelled',message=? WHERE status='running'",(str(Cancelled()),))
     finally:OPERATIONS.end(self.operation)
-  finally:self.file.close()
+  finally:
+   self.file.close()
+   if not self.probe and args and args[0] is None:backup_database()
 
 def worker_busy():
  try:
@@ -180,9 +189,10 @@ def perform(rid,lock):
   cred=credentials();update(rid,status='running',message='Signing in to TitleVision')
   def progress(event):
    if event.get('message'):update(rid,message=event['message'],**({'count':event['count'],'points':event['points']} if 'count' in event else {}))
-  run_process([NODE,ROOT/'collector.mjs'],directory,dict(cred,start=run['start'],end=run['end'],directory=str(directory)),progress)
+  run_process([NODE,ROOT/'collector.mjs'],directory,dict(cred,start=run['start'],end=run['end'],directory=str(directory),historyCache=history_cache.prepare(DATA,directory)),progress)
   update(rid,message='Comparing every row with the downloaded source export')
   run_process([sys.executable,ROOT/'reconcile.py',directory],directory)
+  history_cache.remember(DATA,directory)
   update(rid,message='Building contributor formulas and Excel summaries')
   if PORTABLE:
    run_process([NODE,ROOT/'report/prepare.mjs',directory],directory)
@@ -205,7 +215,7 @@ def perform(rid,lock):
    try:
     pull_shared(pending_months)
     if monthly_sync.active() and old['start']>=monthly_sync.START.isoformat():
-     monthly_sync.add(ROOT,DATA,db,run_process,fetch_month,pending_id)
+     monthly_sync.add(ROOT,DATA,db,run_process,fetch_month,pending_id,refresh_existing=False)
     else:main_workbook.decide(ROOT,DATA,db,run_process,pending_id,True)
     publish_shared(pending_months)
     with db() as c:c.execute('DELETE FROM main_auto_pending WHERE run_id=?',(pending_id,))
@@ -222,18 +232,6 @@ def perform(rid,lock):
    except Cancelled:raise
    except Exception as error:
     issues.append({'id':'auto-main-'+pending_id,'order':old['start']+' to '+old['end'],'kind':'month_refresh','message':'Daily report is available; Main workbook update is pending and will retry on the next run. '+str(error)[:500]})
-  if monthly_sync.active():
-   try:older=monthly_sync.disputed_months(DATA,db,checked_months)
-   except Exception as error:
-    older=[];issues.append({'id':'dispute-list','order':'Earlier Main workbooks','kind':'month_refresh','message':'Could not identify unresolved disputes. '+str(error)[:500]})
-   for month in older:
-    try:
-     pull_shared([month])
-     monthly_sync.refresh(ROOT,DATA,db,run_process,lambda a,b,folder:fetch_month(a,b,folder,rid),month)
-     publish_shared([month])
-    except Cancelled:raise
-    except Exception as error:
-     issues.append({'id':'month-'+month,'order':month+' Main workbook','kind':'month_refresh','message':'Earlier disputed errors could not be refreshed; previous workbook retained. '+str(error)[:500]})
   check_cancelled()
   (directory/'issues.json').write_text(json.dumps(issues),encoding='utf8')
   update(rid,status='review' if issues else 'complete',message=f'{len(issues)} item(s) need review' if issues else 'All report checks passed',count=checks['count'],points=checks['points'],issues=len(issues))
@@ -256,8 +254,9 @@ def fetch_month(start,end,folder,rid=None):
  def progress(event):
   if event.get('message'):monthly_sync.state(db,start[:7],'running',event['message'])
   if rid and event.get('message'):update(rid,message='Month-to-date refresh: '+event['message'])
- run_process([NODE,ROOT/'collector.mjs'],folder,dict(credentials(),start=start,end=end,directory=str(folder),exportOnly=True),progress)
+ run_process([NODE,ROOT/'collector.mjs'],folder,dict(credentials(),start=start,end=end,directory=str(folder),exportOnly=True,historyCache=history_cache.prepare(DATA,folder)),progress)
  run_process([sys.executable,ROOT/'reconcile.py',folder],folder)
+ history_cache.remember(DATA,folder)
 def launch_run(start,end,scheduled_day=None,background=True):
  if shared_view.enabled(db):raise ValueError('This PC is a viewer. Collect and refresh reports on the designated report PC.')
  if UPDATES.busy():raise ValueError('An application update is in progress. Run the report after it finishes.')
@@ -353,6 +352,9 @@ class Handler(BaseHTTPRequestHandler):
  def send(self,code,body,kind='application/json'):
   if not isinstance(body,bytes):body=json.dumps(body).encode()
   self.send_response(code);self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(body)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'");self.end_headers();self.wfile.write(body)
+ def database_error(self,error):
+  if database_backup.corrupt(error):return self.send(503,{'code':'database_corrupt','error':'Report Desk’s local database needs repair. Your saved Excel files are retained. Stop collection and restore a verified database backup before continuing.'})
+  return self.send(400,{'error':str(error)})
  def guard(self,write=False):
   if self.headers.get('Host') not in {f'127.0.0.1:{PORT}',f'localhost:{PORT}'}:raise ValueError('Invalid host')
   if write and (self.headers.get('X-CSRF-Token')!=TOKEN or self.headers.get('Origin') not in {f'http://127.0.0.1:{PORT}',f'http://localhost:{PORT}'}):raise ValueError('Invalid request origin')
@@ -396,7 +398,9 @@ class Handler(BaseHTTPRequestHandler):
    if p not in files:return self.send(404,{'error':'Not found'})
    kind={'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/favicon.svg':'image/svg+xml'}[p]
    self.send(200,(ROOT/'public'/files[p]).read_bytes(),kind)
+  except (BrokenPipeError,ConnectionAbortedError,ConnectionResetError):return
   except WorkerBusy:self.send_busy()
+  except sqlite3.Error as error:self.database_error(error)
   except (ValueError,OSError,sqlite3.Error) as e:self.send(400,{'error':str(e)})
  def do_POST(self):
   try:
@@ -457,7 +461,7 @@ class Handler(BaseHTTPRequestHandler):
      months=[day[:7] for day in main_workbook.days_between(r['start'],r['end'])] if r else []
      if obj['add']:pull_shared(months)
      if obj['add'] and monthly_sync.active() and r and r['start']>=monthly_sync.START.isoformat():
-      result=monthly_sync.add(ROOT,DATA,db,run_process,fetch_month,chunks[3])
+      result=monthly_sync.add(ROOT,DATA,db,run_process,fetch_month,chunks[3],refresh_existing=False)
      else:result=main_workbook.decide(ROOT,DATA,db,run_process,chunks[3],obj['add'])
      if obj['add']:publish_shared(months)
     return self.send(200,result)
@@ -504,7 +508,9 @@ class Handler(BaseHTTPRequestHandler):
     install_schedule(obj['enabled']);return self.send(200,{'enabled':obj['enabled']})
    return self.send(404,{'error':'Not found'})
   except Cancelled:self.send(200,{'cancelled':True,'message':str(Cancelled())})
+  except (BrokenPipeError,ConnectionAbortedError,ConnectionResetError):return
   except WorkerBusy:self.send_busy()
+  except sqlite3.Error as error:self.database_error(error)
   except (ValueError,KeyError,sqlite3.Error,subprocess.SubprocessError,OSError) as e:self.send(400,{'error':str(e)})
 if __name__=='__main__':
  initialize()

@@ -1,13 +1,27 @@
 const $=id=>document.getElementById(id);let state=null,selected=null,pending=false,checkingUpdate=false,updateMessage='',loadedVersion=null,mainBusy=false;
 const labels={cancelled:'Stopped',complete:'Complete',review:'Needs review',failed:'Failed',running:'Running',queued:'Queued'};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let busyNotice=false,stoppingProcess=false,roleSelectionDirty=false;
+let busyNotice=false,stoppingProcess=false,roleSelectionDirty=false,connectionUnavailable=false,connectionNotice='';
+const READ_TIMEOUT_MS=30000;
 function isViewer(){return state?.pcRole==='viewer';}
-function notice(message,error=false){busyNotice=false;$('notice').textContent=message;$('notice').className=error?'error':'';$('notice').hidden=!message;}
+function notice(message,error=false){busyNotice=false;connectionNotice='';$('notice').textContent=message;$('notice').className=error?'error':'';$('notice').hidden=!message;}
+function connectionRestored(){connectionUnavailable=false;if(connectionNotice&&$('notice').textContent===connectionNotice)notice('');connectionNotice='';}
+function connectionFailed(error){
+ connectionUnavailable=true;
+ const message=['request_timeout','connection_lost','database_corrupt'].includes(error.code)?error.message:'Could not refresh Report Desk. '+error.message;
+ if(isViewer())overviewEmpty('Shared dashboard unavailable. Checking again automatically.');
+ if(state?.update?.phase!=='installing'){notice(message,error.code!=='request_timeout');connectionNotice=message;}
+ if(state)mainBooksDisplay();
+}
 async function api(url,body){
  const controller=body===undefined?new AbortController():null;
- const timer=controller?setTimeout(()=>controller.abort(),15000):null;timer?.unref?.();
+ const timer=controller?setTimeout(()=>controller.abort(),READ_TIMEOUT_MS):null;timer?.unref?.();
  try{const r=await fetch(url,body===undefined?{signal:controller.signal}:{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrf},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw responseError(j);return j;}
+ catch(error){
+  if(controller&&(controller.signal.aborted||error.name==='AbortError'))throw Object.assign(Error('Report Desk is taking longer than usual to respond. Retrying automatically. This timeout does not stop a running report.'),{code:'request_timeout'});
+  if(controller&&error.name==='TypeError')throw Object.assign(Error('Report Desk is temporarily unavailable. Checking the connection again automatically.'),{code:'connection_lost'});
+  throw error;
+ }
  finally{if(timer)clearTimeout(timer);}
 }
 function responseError(result){
@@ -16,7 +30,7 @@ function responseError(result){
  return error;
 }
 function reportError(error){notice(error.message,error.code!=='worker_busy');busyNotice=error.code==='worker_busy';}
-function workBlocked(){return !state||pending||mainBusy||state.activity?.busy||['downloading','waiting','installing'].includes(state.update?.phase);}
+function workBlocked(){return !state||connectionUnavailable||pending||mainBusy||state.activity?.busy||['downloading','waiting','installing'].includes(state.update?.phase);}
 function preventBusyAction(){
  if(!workBlocked())return false;
  notice(state?.activity?.busy?'Work is already in progress. '+state.activity.message:mainBusy||pending?'Your request is in progress. Follow the progress above.':'Please wait for the application to be ready.');
@@ -28,10 +42,10 @@ function workControls(){
 }
 function period(r){return r.start===r.end?r.start:`${r.start} – ${r.end}`;}
 async function detail(r){if(!r)return;selected=r.id;$('period').textContent=period(r);$('status').textContent=labels[r.status];$('status').className='badge '+r.status;$('progress').textContent=r.message;$('errors').textContent=r.count??'—';$('points').textContent=r.points??'—';$('review').textContent=r.issues??0;const ready=['complete','review'].includes(r.status);$('latest-download').hidden=!ready;$('latest-download').href=`/api/runs/${r.id}/download`;if(ready){const d=await api('/api/runs/'+r.id);$('issues-panel').hidden=!d.issues.length;$('issues').innerHTML=d.issues.map(i=>`<li><strong>${esc(i.order)}</strong> — ${esc(i.message)}</li>`).join('');}else $('issues-panel').hidden=true;}
-async function refresh(){try{const initial=!state,previous=state;state=await api('/api/state');const completed=state.runs.find(r=>['complete','review'].includes(r.status)&&previous?.runs.some(old=>old.id===r.id&&['queued','running'].includes(old.status)));if(completed)selected=completed.id;mainBooksDisplay();if(loadedVersion&&loadedVersion!==state.version){location.reload();return;}loadedVersion=state.version;if(initial){$('start').value=state.yesterday;$('end').value=state.yesterday;}$('start').max=state.yesterday;$('end').max=state.yesterday;$('schedule-label').textContent=state.schedule?'Enabled · Weekdays at 8:45 AM India time · Monday covers Friday–Sunday':'Paused · Turn on automatic weekday collection';$('schedule').textContent=state.schedule?'Pause schedule':'Enable schedule';$('credentials-state').textContent=state.credentialsSaved?'Sign-in saved and encrypted. Enter a password only to replace it.':'Save your sign-in before running a report.';$('run').disabled=workBlocked()||isViewer();$('history').innerHTML=state.runs.length?state.runs.map(r=>`<tr class="history-row" data-id="${r.id}" tabindex="0"><td><strong>${esc(period(r))}</strong></td><td>${esc(new Date(r.created).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',dateStyle:'medium',timeStyle:'short'}))}</td><td><span class="badge ${r.status}">${labels[r.status]}</span></td><td>${r.count??'—'}</td><td>${r.points??'—'}</td><td>${['complete','review'].includes(r.status)?`<a href="/api/runs/${r.id}/download">Download Excel</a>`:'—'}</td></tr>`).join(''):'<tr><td colspan="6" class="empty">Your collected reports will appear here.</td></tr>';
+async function refresh(){try{const initial=!state,previous=state;state=await api('/api/state');connectionRestored();const completed=state.runs.find(r=>['complete','review'].includes(r.status)&&previous?.runs.some(old=>old.id===r.id&&['queued','running'].includes(old.status)));if(completed)selected=completed.id;mainBooksDisplay();if(loadedVersion&&loadedVersion!==state.version){location.reload();return;}loadedVersion=state.version;if(initial){$('start').value=state.yesterday;$('end').value=state.yesterday;}$('start').max=state.yesterday;$('end').max=state.yesterday;$('schedule-label').textContent=state.schedule?'Enabled · Weekdays at 8:45 AM India time · Monday covers Friday–Sunday':'Paused · Turn on automatic weekday collection';$('schedule').textContent=state.schedule?'Pause schedule':'Enable schedule';$('credentials-state').textContent=state.credentialsSaved?'Sign-in saved and encrypted. Enter a password only to replace it.':'Save your sign-in before running a report.';$('run').disabled=workBlocked()||isViewer();$('history').innerHTML=state.runs.length?state.runs.map(r=>`<tr class="history-row" data-id="${r.id}" tabindex="0"><td><strong>${esc(period(r))}</strong></td><td>${esc(new Date(r.created).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',dateStyle:'medium',timeStyle:'short'}))}</td><td><span class="badge ${r.status}">${labels[r.status]}</span></td><td>${r.count??'—'}</td><td>${r.points??'—'}</td><td>${['complete','review'].includes(r.status)?`<a href="/api/runs/${r.id}/download">Download Excel</a>`:'—'}</td></tr>`).join(''):'<tr><td colspan="6" class="empty">Your collected reports will appear here.</td></tr>';
 sharedControls();$('main-edit-hint').textContent=state.sharedFolder?'Open the workbook in the shared folder. Edit Team, Searcher, Typer or Final Error Contributor, then save and close Excel. The next report or Sync now imports those corrections and updates the same shared file. Keep all source rows and columns.':'Download the latest Main workbook, edit Team in column D, or edit Searcher, Typer or Final Error Contributor in Excel and save it. Then click Save Excel edits and choose that file. Saved corrections stay with each error during future monthly updates. Statuses, points and client comments continue refreshing from TitleVision. Keep all original rows and columns.';
 $('schedule').disabled=!state.schedule&&!state.verifiedLive;if(!state.schedule&&!state.verifiedLive)$('schedule-label').textContent='Paused · A complete live report must pass verification first';
-const r=state.runs.find(r=>r.id===selected)||state.runs[0];await detail(r);if(initial&&!state.credentialsSaved&&!isViewer()){$('all-settings').open=true;$('settings').open=true;}}catch(e){if(isViewer())overviewEmpty('Shared dashboard unavailable. Checking again automatically.');if(state?.update?.phase!=='installing')notice('Cannot connect to Report Desk. '+e.message,true);}}
+const r=state.runs.find(r=>r.id===selected)||state.runs[0];await detail(r);if(initial&&!state.credentialsSaved&&!isViewer()){$('all-settings').open=true;$('settings').open=true;}return true;}catch(e){connectionFailed(e);return false;}}
 $('run-form').addEventListener('submit',async e=>{e.preventDefault();if(isViewer()){notice('Run reports on the designated report PC.');return;}if(preventBusyAction())return;pending=true;mainBooksDisplay();try{const r=await api('/api/run',{start:$('start').value,end:$('end').value});selected=r.id;notice('Report started. You can leave this page open to follow its progress.');await refresh();}catch(e){reportError(e);}finally{pending=false;await refresh();}});
 $('yesterday').onclick=()=>{$('start').value=state.yesterday;$('end').value=state.yesterday;};
 $('credentials').onsubmit=async e=>{e.preventDefault();if(preventBusyAction())return;const button=e.target.querySelector('button');button.disabled=true;try{await api('/api/credentials',{username:$('username').value,password:$('password').value});$('password').value='';notice('Sign-in saved securely for this Windows account.');await refresh();}catch(e){reportError(e);}finally{workControls();}};
@@ -84,7 +98,7 @@ function mainBooksDisplay(){
  overviewControls();
  const books=state.mainBooks||[];
  const enabled=state.phase2?.enabled&&!isViewer(),blocked=workBlocked();
- $('phase2-note').textContent=enabled?'Verified runs add their dates to the Main workbook automatically. The app rechecks the full month for status, points and comment changes. On weekdays it also revisits older months with disputed errors. Download the latest workbook after each refresh.':'Monthly refresh begins with September 2026.';
+ $('phase2-note').textContent=enabled?'Verified runs add their dates to the Main workbook automatically. Existing statuses and comments are rechecked only when you click Check latest error status for that month. Download the latest workbook after each refresh.':'Monthly refresh begins with September 2026.';
  $('create-main-form').hidden=!enabled;$('create-main').disabled=blocked;
  if(!$('main-month').value)$('main-month').value=enabled?state.phase2.currentMonth:'2026-09';
  $('main-month').max=state.phase2?.currentMonth||'';
@@ -92,7 +106,7 @@ function mainBooksDisplay(){
   const managed=enabled&&b.month>='2026-09';
   const name=new Date(b.month+'-01T12:00:00').toLocaleDateString('en-IN',{month:'long',year:'numeric'})+' workbook';
   const refresh=b.syncStatus==='cancelled'?'Stopped — last saved workbook retained':b.syncStatus==='running'?(state.activity?.busy?'Refreshing — last verified workbook shown':'Previous refresh interrupted — you can retry'):b.syncStatus==='failed'?'Refresh failed — previous workbook retained':b.syncStatus==='empty'?'Empty workbook':b.syncedAt?'Verified '+new Date(b.syncedAt).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'}):'Verified daily snapshots';
-  return `<tr><td><strong>${esc(name)}</strong></td><td>${b.days?esc(b.start)+' – '+esc(b.end):'No collected dates'}<br><small>${b.days} collected day(s)</small></td><td class="sync-cell">${esc(refresh)}${b.syncThrough?'<br><small>Checked through '+esc(b.syncThrough)+'</small>':''}${b.syncStatus==='failed'?'<br><small>'+esc(b.syncMessage)+'</small>':''}</td><td>${b.count}</td><td>${b.points}</td><td><a href="/api/main/${encodeURIComponent(b.month)}/download">Download main Excel</a>${managed?`<div class="book-actions"><button data-month="${esc(b.month)}" data-action="edits" ${blocked||!b.count?'disabled':''}>Save Excel edits</button><button data-month="${esc(b.month)}" data-action="refresh" ${blocked?'disabled':''}>Refresh status</button>${state.sharedFolder?'':`<button data-month="${esc(b.month)}" data-action="delete" ${blocked?'disabled':''}>Delete workbook</button>`}</div>`:''}</td></tr>`;
+  return `<tr><td><strong>${esc(name)}</strong></td><td>${b.days?esc(b.start)+' – '+esc(b.end):'No collected dates'}<br><small>${b.days} collected day(s)</small></td><td class="sync-cell">${esc(refresh)}${b.syncThrough?'<br><small>Checked through '+esc(b.syncThrough)+'</small>':''}${b.syncStatus==='failed'?'<br><small>'+esc(b.syncMessage)+'</small>':''}</td><td>${b.count}</td><td>${b.points}</td><td><a href="/api/main/${encodeURIComponent(b.month)}/download">Download main Excel</a>${managed?`<div class="book-actions"><button data-month="${esc(b.month)}" data-action="edits" ${blocked||!b.count?'disabled':''}>Save Excel edits</button><button data-month="${esc(b.month)}" data-action="refresh" ${blocked?'disabled':''}>Check latest error status</button>${state.sharedFolder?'':`<button data-month="${esc(b.month)}" data-action="delete" ${blocked?'disabled':''}>Delete workbook</button>`}</div>`:''}</td></tr>`;
  }).join(''):'<tr><td colspan="6" class="empty">No main workbook yet. Complete a verified report to create one automatically.</td></tr>';
 }
 async function manageMain(action,month){
@@ -187,7 +201,7 @@ $('overview-reload').onclick=()=>fetchOverview(true);
 $('overview-refresh-status').onclick=()=>manageMain('refresh',$('overview-month').value);
 
 let refreshPoll=null;
-function refreshWithVersion(){if(refreshPoll)return refreshPoll;refreshPoll=(async()=>{try{await refresh();updateDisplay();fetchOverview();if(state)$('name-map-status').textContent=state.nameMapping?.loaded?`Loaded · ${state.nameMapping.searchAliases} Search / ${state.nameMapping.typingAliases} Typing aliases`:'No roster loaded';}finally{refreshPoll=null;}})();return refreshPoll;}refreshWithVersion();setInterval(refreshWithVersion,5000);
+function refreshWithVersion(){if(refreshPoll)return refreshPoll;refreshPoll=(async()=>{try{const connected=await refresh();updateDisplay();if(connected)fetchOverview();if(state)$('name-map-status').textContent=state.nameMapping?.loaded?`Loaded · ${state.nameMapping.searchAliases} Search / ${state.nameMapping.typingAliases} Typing aliases`:'No roster loaded';}finally{refreshPoll=null;}})();return refreshPoll;}refreshWithVersion();setInterval(refreshWithVersion,5000);
 if(document.modelContext?.registerTool){
  const life=new AbortController();window.addEventListener('pagehide',()=>life.abort(),{once:true});
  Promise.resolve(document.modelContext.registerTool({name:'get_report_runs',title:'Read report history',description:'Read the local TitleVision report runs and their completion or review status.',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true,untrustedContentHint:true},async execute(){await refresh();return {runs:state.runs,scheduleEnabled:state.schedule};}},{signal:life.signal})).catch(()=>{});

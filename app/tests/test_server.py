@@ -20,6 +20,46 @@ class ServerTests(unittest.TestCase):
   with patch.object(server,'db',side_effect=RuntimeError('database busy')):
    with urllib.request.urlopen(self.url+'/api/health') as response:value=json.load(response)
   self.assertTrue(value['ready']);self.assertEqual(value['processId'],os.getpid());self.assertNotIn('csrf',value)
+ def test_corrupt_database_reports_repair_required_without_claiming_network_failure(self):
+  with patch.object(server,'public_state',side_effect=server.sqlite3.DatabaseError('database disk image is malformed')):
+   with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(self.url+'/api/state')
+  self.assertEqual(error.exception.code,503)
+  result=json.load(error.exception);self.assertEqual(result['code'],'database_corrupt');self.assertIn('needs repair',result['error'])
+ def test_database_backup_is_readable_and_damaged_source_does_not_replace_it(self):
+  import sqlite3
+  data=server.DATA/'backup-fixture';data.mkdir()
+  with sqlite3.connect(data/'reporting.sqlite') as c:c.execute('create table important(value)');c.execute("insert into important values ('saved edit')")
+  file=server.database_backup.create(data)
+  with sqlite3.connect(file) as c:self.assertEqual(c.execute('select * from important').fetchall(),[('saved edit',)])
+  before=file.read_bytes();(data/'reporting.sqlite').write_bytes(b'corrupt database')
+  with self.assertRaises(sqlite3.DatabaseError):server.database_backup.create(data)
+  self.assertEqual(file.read_bytes(),before)
+  self.assertEqual(list((data/'database-backups').glob('*.tmp')),[])
+ def test_month_collection_receives_cache_and_remembers_only_after_reconciliation(self):
+  import hashlib
+  folder=server.DATA/'cache-integration';folder.mkdir()
+  events=[]
+  def process(args,directory,*positional,**kwargs):
+   if str(args[1]).endswith('collector.mjs'):
+    events.append('collect');job=positional[0]
+    self.assertTrue(Path(job['historyCache']).is_file())
+    (directory/'source.json').write_text('[]')
+   else:
+    events.append('reconcile')
+    (directory/'reconciled.json').write_text(json.dumps({'count':0,'sourceSha256':hashlib.sha256(b'[]').hexdigest()}))
+  with patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.history_cache,'remember',wraps=server.history_cache.remember) as remember:
+   server.fetch_month('2026-10-01','2026-10-02',folder)
+   remember.assert_called_once_with(server.DATA,folder)
+  self.assertEqual(events,['collect','reconcile'])
+  with patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=ValueError('Export verification failed')),patch.object(server.history_cache,'remember') as remember:
+   with self.assertRaises(ValueError):server.fetch_month('2026-10-01','2026-10-02',folder)
+   remember.assert_not_called()
+ def test_disconnected_reader_does_not_trigger_a_second_error_response(self):
+  handler=object.__new__(server.Handler);handler.path='/api/health';handler.guard=MagicMock()
+  for error in (BrokenPipeError,ConnectionAbortedError,ConnectionResetError):
+   handler.send=MagicMock(side_effect=error('Browser stopped waiting'))
+   handler.do_GET()
+   self.assertEqual(handler.send.call_count,1)
  def post(self,path,body):
   request=urllib.request.Request(self.url+path,json.dumps(body).encode(),headers={'Origin':self.url,'X-CSRF-Token':server.TOKEN,'Content-Type':'application/json'})
   return urllib.request.urlopen(request)
@@ -416,14 +456,14 @@ class ServerTests(unittest.TestCase):
   def process(args,directory,*a,**kw):
    (directory/'issues.json').write_text('[]')
    (directory/'validation.json').write_text(json.dumps({'passed':True,'count':1,'points':3}))
-  def add(*args):
+  def add(*args,**kwargs):
    self.assertTrue((folder/'validation.json').exists())
    self.assertEqual(args[-1],rid)
    raise ValueError('Simulated month export failure')
   lock=MagicMock()
   try:
    with server.db() as c:c.execute('INSERT INTO main_auto_pending VALUES (?,?)',(rid,'now'))
-   with patch.object(server.monthly_sync,'today',return_value=date(2026,10,2)),patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.monthly_sync,'add',side_effect=add) as sync,patch.object(server.monthly_sync,'disputed_months',return_value=[]):
+   with patch.object(server.monthly_sync,'today',return_value=date(2026,10,2)),patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.history_cache,'remember'),patch.object(server.monthly_sync,'add',side_effect=add) as sync,patch.object(server.monthly_sync,'disputed_months',return_value=[]):
     server.perform(rid,lock);sync.assert_called_once()
    with server.db() as c:run=c.execute('SELECT * FROM runs WHERE id=?',(rid,)).fetchone()
    self.assertEqual(run['status'],'review');self.assertEqual(run['count'],1);self.assertEqual(run['points'],3)
@@ -431,7 +471,7 @@ class ServerTests(unittest.TestCase):
    with server.db() as c:self.assertIsNotNone(c.execute('SELECT 1 FROM main_auto_pending WHERE run_id=?',(rid,)).fetchone())
   finally:
    with server.db() as c:c.execute('DELETE FROM runs WHERE id=?',(rid,));c.execute('DELETE FROM main_auto_pending WHERE run_id=?',(rid,))
- def test_verified_run_auto_adds_and_refreshes_earlier_disputes(self):
+ def test_verified_run_auto_adds_without_refreshing_existing_or_earlier_disputes(self):
   rid=uuid.uuid4().hex;folder=server.DATA/'runs'/rid
   with server.db() as c:
    c.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,'2026-10-02','2026-10-04','queued','test','now',None,None,0,None))
@@ -441,10 +481,11 @@ class ServerTests(unittest.TestCase):
    (directory/'validation.json').write_text(json.dumps({'passed':True,'count':2,'points':4}))
   lock=MagicMock()
   try:
-   with patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.monthly_sync,'add',return_value={'choice':'yes'}) as add,patch.object(server.monthly_sync,'disputed_months',return_value=['2026-09']),patch.object(server.monthly_sync,'refresh',return_value={}) as refresh:
+   with patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.history_cache,'remember'),patch.object(server.monthly_sync,'add',return_value={'choice':'yes'}) as add,patch.object(server.monthly_sync,'disputed_months',return_value=['2026-09']),patch.object(server.monthly_sync,'refresh',return_value={}) as refresh:
     server.perform(rid,lock)
    self.assertEqual(add.call_args.args[-1],rid)
-   self.assertEqual(refresh.call_args.args[-1],'2026-09')
+   self.assertEqual(add.call_args.kwargs,{'refresh_existing':False})
+   refresh.assert_not_called()
    with server.db() as c:
     self.assertEqual(c.execute('SELECT status FROM runs WHERE id=?',(rid,)).fetchone()[0],'complete')
     self.assertIsNone(c.execute('SELECT 1 FROM main_auto_pending WHERE run_id=?',(rid,)).fetchone())
@@ -461,7 +502,7 @@ class ServerTests(unittest.TestCase):
    (directory/'issues.json').write_text('[]')
    (directory/'validation.json').write_text(json.dumps({'passed':True,'count':1,'points':3}))
   try:
-   with patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.monthly_sync,'add',return_value={'choice':'yes'}) as add,patch.object(server.monthly_sync,'disputed_months',return_value=[]):
+   with patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.history_cache,'remember'),patch.object(server.monthly_sync,'add',return_value={'choice':'yes'}) as add,patch.object(server.monthly_sync,'disputed_months',return_value=[]):
     server.perform(new,MagicMock())
    self.assertEqual([x.args[-1] for x in add.call_args_list],[old,new])
    with server.db() as c:self.assertEqual(c.execute('SELECT count(*) FROM main_auto_pending WHERE run_id IN (?,?)',(old,new)).fetchone()[0],0)

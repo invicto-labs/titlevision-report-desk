@@ -1,9 +1,10 @@
 """Decision columns use verified source identities, authors and chronological replies."""
 from pathlib import Path
-import copy,json,sys,tempfile,unittest,openpyxl
+import copy,json,sys,tempfile,unittest,openpyxl,hashlib
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from status_history import fields
 from reconcile import reconcile,HEADERS
+import history_cache
 
 def sample(status='Non-Chargeable',id='219795'):
  values=['']*20;values[0]=status;values[1]='SAME-ORDER';values[2]='ADS SP2';values[9]='Full Title';values[12]=values[16]=values[17]='8/3/2026';values[15]='0'
@@ -14,6 +15,40 @@ def sample(status='Non-Chargeable',id='219795'):
    'comments':[['8/4/2026 4:14:47 PM','ADSSP2_PerformanceModuleManager','Hello,\nPlease review and dispute the error accordingly.'],['8/5/2026 5:06:50 AM','brucec','Training, reason accepted']]}}
 
 class StatusHistoryTests(unittest.TestCase):
+ def snapshot(self,folder,records,stamp):
+  folder.mkdir(parents=True,exist_ok=True)
+  raw=json.dumps(records).encode();(folder/'source.json').write_bytes(raw)
+  (folder/'reconciled.json').write_text(json.dumps({'count':len(records),'sourceSha256':hashlib.sha256(raw).hexdigest()}))
+  (folder/'collection.json').write_text(json.dumps({'collectedAt':stamp}))
+ def test_upgrade_uses_latest_verified_observation_and_never_failed_collection(self):
+  with tempfile.TemporaryDirectory() as temp:
+   data=Path(temp);older=sample('Disputed');accepted=sample('Accepted');accepted.pop('statusHistory')
+   self.snapshot(data/'runs'/'old',[older],'2026-10-01T00:00:00Z')
+   self.snapshot(data/'month-snapshots'/'2026-10'/'new',[accepted],'2026-10-02T00:00:00Z')
+   corrupt=data/'runs'/'unverified';self.snapshot(corrupt,[sample('Chargeable')],'2026-10-03T00:00:00Z')
+   (corrupt/'source.json').write_text(json.dumps([older]))
+   cached=history_cache.load(data)
+   self.assertEqual(cached['219795']['values'][0],'Accepted');self.assertNotIn('statusHistory',cached['219795'])
+ def test_cache_changes_only_after_reconciliation_and_keeps_separate_error_ids(self):
+  with tempfile.TemporaryDirectory() as temp:
+   data=Path(temp);folder=data/'runs'/'one';rows=[sample(id='1'),sample('Disputed',id='2')]
+   self.snapshot(folder,rows,'2026-10-01T00:00:00Z');history_cache.remember(data,folder)
+   self.assertEqual(set(history_cache.load(data)),{'1','2'})
+   before=(data/history_cache.NAME).read_bytes()
+   (folder/'source.json').write_text('[]')
+   with self.assertRaises(ValueError):history_cache.remember(data,folder)
+   self.assertEqual((data/history_cache.NAME).read_bytes(),before)
+   self.snapshot(folder,[sample('Chargeable',id='1')],'2026-10-02T00:00:00Z');history_cache.remember(data,folder)
+   result=history_cache.load(data);self.assertEqual(result['1']['values'][0],'Chargeable');self.assertEqual(result['2']['values'][0],'Disputed')
+ def test_corrupt_cache_never_reuses_unvalidated_history(self):
+  with tempfile.TemporaryDirectory() as temp:
+   data=Path(temp);broken=sample();broken['statusHistory']['sourceId']='different'
+   (data/history_cache.NAME).write_text(json.dumps({'schema':1,'entries':{'219795':broken}}))
+   self.assertEqual(history_cache.load(data),{})
+   (data/history_cache.NAME).write_text('invalid JSON');self.assertEqual(history_cache.load(data),{})
+ def test_accepted_without_popup_has_source_status_but_no_invented_comment(self):
+  for status in ['Accepted','Auto-Accepted']:
+   row=sample(status);row.pop('statusHistory');self.assertEqual(fields(row,required=True),[status,'','',''])
  def test_confirmed_mapping_does_not_confuse_client_and_vendor_accounts(self):
   r=sample();self.assertEqual(fields(r),['Disputed',r['statusHistory']['comments'][0][2],'Non-Chargeable','Training, reason accepted'])
   r['statusHistory']['comments'].insert(0,['8/4/2026 3:00:00 PM','brucec_ADSSP2','Earlier vendor note'])

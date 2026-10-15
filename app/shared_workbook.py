@@ -45,7 +45,16 @@ def filename(month):
 
 def target(db, month):
     location = folder(db)
-    return location / filename(month) if location else None
+    return located_book(location, month) if location else None
+
+
+def located_book(location, month):
+    """Keep a manually archived month in Archive during later syncs."""
+    current = location / filename(month)
+    archived = location / 'Archive' / filename(month)
+    if current.exists() and archived.exists():
+        raise ValueError(f'{current.name} exists in both the shared folder and Archive. Keep one authoritative copy before syncing.')
+    return archived if archived.exists() else current
 
 
 def digest(data):
@@ -87,7 +96,7 @@ def configure(data, db, path):
     with db() as c:
         months = [row['month'] for row in main_workbook.books(c) if row['month'] >= '2026-09']
     for month in months:
-        existing = place / filename(month)
+        existing = located_book(place, month)
         if existing.exists():
             closed(existing)
             if digest(existing.read_bytes()) != digest(local_book(data, db, month).read_bytes()):

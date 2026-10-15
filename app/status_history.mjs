@@ -1,3 +1,4 @@
+import {serial} from './rules.mjs';
 // Read the same page opened by an error's Status link. Never submit an edit.
 export async function readStatusHistory(page,row,username){
  const order=new URL(row.url),url=new URL('/UserErrors.aspx',order.origin);
@@ -36,4 +37,21 @@ export async function readStatusHistory(page,row,username){
  // Vendor field. Only verified ADS accounts may author our investigation reply.
  const internalUsers=[...new Set([...result.vendorUsers.filter(user=>/^ADSSP2_|_ADS(?:SearchType|SP2|P2)$/i.test(user)),username])];
  return {schema:2,sourceId:row.sourceId,orderId:order.searchParams.get('PublicOrderId'),url:url.href,readAt:new Date().toISOString(),...result,vendorUsers:[...new Set([...result.vendorUsers,username])],internalUsers};
+}
+// Compare native error IDs, not order numbers: one order can have several errors.
+export function planStatusHistory(rows,previous={}){
+ const fetch=[],counts={reused:0,skipped:0};
+ for(const row of rows){
+  const status=row.values[0],old=previous[row.sourceId];
+  const normalized=value=>String(value??'').replace(/\s+/g,' ').trim();
+  let same=false;
+  try{same=old&&old.sourceId===row.sourceId&&old.url===row.url&&Array.isArray(old.values)&&[0,1,2,9].every(i=>normalized(old.values[i])===normalized(row.values[i]))&&serial(old.values[12])===serial(row.values[12]);}catch{/* Invalid cached identity must be collected again. */}
+  delete row.statusHistory;delete row.statusFields;
+  if(status==='New'){counts.skipped++;continue;}
+  if(same&&old.statusHistory?.status===status){row.statusHistory=structuredClone(old.statusHistory);counts.reused++;continue;}
+  if(['Accepted','Auto-Accepted'].includes(status)){counts.skipped++;continue;}
+  if(!['Disputed','Chargeable','Non-Chargeable'].includes(status))throw Error(`Unrecognized error status: ${status}. Review required.`);
+  fetch.push(row);
+ }
+ return {fetch,...counts};
 }

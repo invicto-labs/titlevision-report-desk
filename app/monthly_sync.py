@@ -190,7 +190,7 @@ def delete(data,db,month):
   c.executemany('DELETE FROM main_choices WHERE run_id=?',[(rid,) for rid in ids])
   c.execute('DELETE FROM main_snapshots WHERE month=?',(month,));c.execute('DELETE FROM main_sync_state WHERE month=?',(month,))
   return {'books':main.books(c),'message':'Monthly workbook removed. Daily reports remain available; a future verified run will rebuild it.'}
-def add(root,data,db,run_process,fetch,rid):
+def add(root,data,db,run_process,fetch,rid,refresh_existing=True):
  if not re.fullmatch(r'[0-9a-f]{32}',rid):raise ValueError('Invalid report')
  with db() as c:
   found=c.execute('SELECT * FROM runs WHERE id=?',(rid,)).fetchone()
@@ -205,12 +205,30 @@ def add(root,data,db,run_process,fetch,rid):
  entries={m:records(root,data,db,m,selected) for m in months}
  prepared=[]
  for month in months:
-  snapshot=refresh(root,data,db,run_process,fetch,month)
+  snapshot=refresh(root,data,db,run_process,fetch,month) if refresh_existing else None
   try:
-   rows,audit=overlay(entries[month],snapshot['current'],name_mapping.load(data))
+   if snapshot:
+    rows,audit=overlay(entries[month],snapshot['current'],name_mapping.load(data))
+   else:
+    # Append verified daily rows without checking existing errors on the website.
+    # Preserve the latest saved decisions, including an earlier manual refresh.
+    with db() as c:book=c.execute('SELECT folder FROM main_books WHERE month=?',(month,)).fetchone()
+    saved={}
+    if book:
+     payload=json.loads((safe_folder(data,book['folder'],'main')/'payload.json').read_text(encoding='utf8'))
+     prior=report_layout.current_rows(payload['data'][0],payload['data'][1:]);ids=payload.get('editIds',[])
+     if len(ids)!=len(prior):raise ValueError('Saved workbook error identities are missing; review before adding dates.')
+     saved=dict(zip(ids,prior))
+    rows=[];audit=[]
+    for source,original in entries[month]:
+     key=source_id(source);row=list(original);old=saved.get(key)
+     if old:
+      if row[1]!=old[1] or row[10]!=old[10]:raise ValueError('Saved error identity changed; previous workbook retained.')
+      for field in (0,13,14,23,24,25,26):row[field]=old[field]
+     rows.append(row);audit.append({'sourceId':key,'order':row[1],'status':row[0],'points':row[13],'decisionFields':row[23:27]})
    rows,overrides=manual_edits.apply(rows,audit,manual_edits.load(db,month))
    included=sorted(d for d in selected if d.startswith(month+'-'))
-   prepared.append(prepare(root,data,run_process,month,included,rows,audit,snapshot['through'],snapshot['checkedAt'],overrides))
+   prepared.append(prepare(root,data,run_process,month,included,rows,audit,snapshot['through'] if snapshot else None,snapshot['checkedAt'] if snapshot else None,overrides))
   except Cancelled as error:
    state(db,month,'cancelled',str(error));raise
   except Exception as error:
@@ -221,4 +239,4 @@ def add(root,data,db,run_process,fetch,rid):
   c.executemany('INSERT OR REPLACE INTO main_books VALUES (?,?,?,?,?,?,?,?)',prepared)
   c.executemany('INSERT OR REPLACE INTO main_days VALUES (?,?)',[(day,rid) for day in days])
   c.execute('INSERT OR REPLACE INTO main_choices VALUES (?,?)',(rid,'yes'))
-  return {'choice':'yes','books':main.books(c),'message':'Verified dates added automatically. Month-to-date statuses, points and comments checked; PivotTables rebuilt.'}
+  return {'choice':'yes','books':main.books(c),'message':'Verified dates added automatically; PivotTables rebuilt. Existing statuses change only when you click Check latest error status.' if not refresh_existing else 'Verified dates added automatically. Month-to-date statuses, points and comments checked; PivotTables rebuilt.'}
