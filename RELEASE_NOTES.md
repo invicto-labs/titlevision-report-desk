@@ -1,3 +1,9 @@
+## Version 1.4.21
+
+- Recognize both Excel owner-file naming patterns before importing or replacing a shared workbook, so an open file produces a clear close-and-sync message.
+- Show Non-Chargeable in Final Error Contributor whenever the current source status is Non-Chargeable, including when a saved contributor override exists. Group those errors separately in the contributor PivotTable and its drill-down records.
+- Preserve Searcher, Typer, Team and saved attribution corrections. If the status changes back, restore the applicable contributor. Keep source error counts and points unchanged.
+
 ## Version 1.4.20
 
 - Make existing error status refresh manual through Check latest error status. Daily collections append verified errors and preserve the latest saved decisions; they no longer trigger month-wide or older-dispute refreshes.

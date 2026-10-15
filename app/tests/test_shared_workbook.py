@@ -113,12 +113,18 @@ class SharedWorkbookTests(unittest.TestCase):
 
     def test_open_excel_owner_file_blocks_publication(self):
         shared.publish(self.place, self.db, self.month)
-        owner = self.target.with_name('~$' + self.target.name[2:])
-        owner.write_bytes(b'open in Excel')
         self.local.write_bytes(b'new verified workbook')
-        with self.assertRaisesRegex(ValueError, 'open in Excel'):
-            shared.publish(self.place, self.db, self.month)
-        self.assertEqual(self.target.read_bytes(), b'first validated workbook')
+        for name in (self.target.name, self.target.name[2:]):
+            with self.subTest(owner=name):
+                owner = self.target.with_name('~$' + name)
+                owner.write_bytes(b'open in Excel')
+                try:
+                    with self.assertRaisesRegex(ValueError, 'open in Excel'):
+                        shared.publish(self.place, self.db, self.month)
+                    with self.assertRaisesRegex(ValueError, 'open in Excel'):
+                        shared.pull(self.place, self.place, self.db, None, self.month)
+                    self.assertEqual(self.target.read_bytes(), b'first validated workbook')
+                finally: owner.unlink()
 
 
 if __name__ == '__main__':

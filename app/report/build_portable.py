@@ -12,6 +12,8 @@ def build(folder):
  collection=json.loads((folder/'collection.json').read_text(encoding='utf8'))
  layout=json.loads((Path(__file__).resolve().parents[1]/'templates/layout.json').read_text(encoding='utf8'))
  rows=report_layout.current_rows(payload['data'][0],payload['data'][1:])
+ for row in rows:
+  if report_layout.non_chargeable(row):row[22]=report_layout.NON_CHARGEABLE
  if 'contributorOverrides' in payload:
   payload['contributorOverrides']=[report_layout.normalize_override(o) for o in payload['contributorOverrides']]
  payload.update(data=[report_layout.HEADERS,*rows],specs=report_layout.pivot_specs(rows),widths=layout['widths'])
@@ -47,6 +49,7 @@ def build(folder):
     if override:
      team=override['team'].replace('"','""');name=override['name'].replace('"','""')
      formula=f'=IF(TRIM(D{r})="{team}","{name}",{formula[1:]})'
+    formula=f'=IF(TRIM(A{r})="Non-Chargeable","Non-Chargeable",{formula[1:]})'
     code=sheet.write_formula(i,j,formula,cellformat,value or '')
    else:code=sheet.write(i,j,value,cellformat)
    if code:raise ValueError('Excel cell write failed; report withheld')

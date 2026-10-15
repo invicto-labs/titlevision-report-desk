@@ -50,6 +50,7 @@ class ReportTests(unittest.TestCase):
       decoded.append([fields[j].find('x:sharedItems',ns)[int(c.get('v'))].get('v') if E.QName(c).localname=='x' else c.get('v') for j,c in enumerate(record)])
      self.assertEqual([float(r[13]) for r in decoded],[r[13] for r in rows])
      self.assertEqual([r[1] for r in decoded],[r[1] for r in rows])
+     self.assertEqual([r[22] for r in decoded],['Non-Chargeable']*len(rows))
      pivots=[E.fromstring(z.read('xl/pivotTables/pivotTable'+str(k)+'.xml')) for k in range(1,5)]
      self.assertEqual([p.get('rowHeaderCaption') for p in pivots],['Names','Status','Team','Points'])
      for pivot in pivots:
@@ -64,6 +65,13 @@ class ReportTests(unittest.TestCase):
      self.assertEqual([sheet.cell(2,c).value for c in range(24,28)],rows[0][23:27]);self.assertEqual(sheet['Y2'].data_type,'s');self.assertFalse(sheet['AA2'].alignment.wrap_text)
      self.assertEqual(sheet['D1'].value,'Team');self.assertEqual(sheet['D2'].value,teams[0]);self.assertEqual(sheet['W2'].data_type,'f')
      self.assertEqual(sheet['W1'].value,'Final Error Contributor')
+     self.assertTrue(sheet['W2'].value.startswith('=IF(TRIM(A2)="Non-Chargeable","Non-Chargeable",'))
+     cached=openpyxl.load_workbook(folder/'report.xlsx',data_only=True)
+     self.assertEqual(cached['SP 2']['W2'].value,'Non-Chargeable')
+     self.assertEqual(cached['Sheet1']['A4'].value,'Non-Chargeable')
+     self.assertEqual(cached['Sheet1']['B4'].value,len(rows))
+     self.assertEqual(cached['Sheet1']['C4'].value,sum(r[13] for r in rows))
+     cached.close()
      self.assertEqual(sheet.data_validations.dataValidation[0].formula1,'"Search,Typing,Triage,VM Team,Leadership"')
      self.assertEqual(sheet.freeze_panes,'A2')
      self.assertEqual(sheet.row_dimensions[1].height,18.75)

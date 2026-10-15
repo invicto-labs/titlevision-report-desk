@@ -13,6 +13,7 @@ def initialize(c):
     c.execute('CREATE TABLE IF NOT EXISTS main_edits (month TEXT, source_id TEXT, fields TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY(month,source_id))')
 
 def contributor(row):
+    if report_layout.non_chargeable(row): return report_layout.NON_CHARGEABLE
     team = report_layout.normalize_team((row[3] or '').strip())
     return team if team in ('Triage','VM Team','Leadership') else (row[18] or '') if team == 'Search' else (row[20] or '') if team in ('Type','Typing') else ''
 
@@ -33,7 +34,9 @@ def apply(rows, audit, edits):
         row[3] = report_layout.normalize_team(row[3])
         override = report_layout.normalize_override(saved.get('final'))
         if override and override['team'] != row[3]: override = None
-        row[22] = override['name'] if override else contributor(row)
+        # Keep saved attribution for a later status reversal, but never charge
+        # the employee in the contributor pivot while this error is waived.
+        row[22] = report_layout.NON_CHARGEABLE if report_layout.non_chargeable(row) else override['name'] if override else contributor(row)
         overrides.append(override)
     return rows, overrides
 

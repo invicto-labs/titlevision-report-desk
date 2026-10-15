@@ -19,4 +19,9 @@ test('private role-specific roster controls daily Searcher, Typer and contributo
  assert.deepEqual([rows[1][18],rows[1][20],rows[1][22]],['Ashwin Kumar M','Sachin S','Sachin S']);
  assert.deepEqual([rows[2][18],rows[2][20],rows[2][22]],['','Kishore R','Kishore R']);
  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(folder,'issues.json'),'utf8')).map(i=>i.kind),['roster_team_review']);
+ source[0].values[0]='Non-Chargeable';
+ fs.writeFileSync(path.join(folder,'source.json'),JSON.stringify(source));
+ execFileSync(process.execPath,[path.join(app,'report','prepare.mjs'),folder],{env:{...process.env,TITLEVISION_DATA:folder}});
+ const waived=JSON.parse(fs.readFileSync(path.join(folder,'payload.json'),'utf8')).data[1];
+ assert.deepEqual([waived[18],waived[20],waived[22]],['Kishore R','Kanna Deepika','Non-Chargeable']);
 });

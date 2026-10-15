@@ -11,6 +11,10 @@ LEGACY_HEADERS = [
 PREVIOUS_HEADERS = LEGACY_HEADERS[:3] + ['Team'] + LEGACY_HEADERS[4:22] + LEGACY_HEADERS[23:]
 HEADERS = [h.replace('Contributer','Contributor') for h in PREVIOUS_HEADERS]
 TEAMS = ('Search', 'Typing', 'Triage', 'VM Team', 'Leadership')
+NON_CHARGEABLE = 'Non-Chargeable'
+
+def non_chargeable(row):
+    return str(row[0] or '').strip().casefold() == NON_CHARGEABLE.casefold()
 
 def normalize_team(value):
     return {'Type': 'Typing', 'VM team': 'VM Team'}.get(value, value)

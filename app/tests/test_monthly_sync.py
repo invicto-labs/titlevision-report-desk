@@ -88,6 +88,7 @@ class MonthlySyncTests(unittest.TestCase):
   self.assertEqual(len(self.fetches),before)
   self.assertEqual(len(rows),2)
   self.assertEqual(rows[0][0],'Non-Chargeable');self.assertEqual(rows[0][13],0)
+  self.assertEqual(rows[0][22],'Non-Chargeable')
   self.assertEqual(rows[0][23:27],['Disputed','Our reply','Non-Chargeable','Client reply'])
   self.assertEqual(rows[1][0],'Accepted');self.assertEqual(rows[1][13],2)
   sync.add(ROOT,self.data,self.db,self.build,self.fetch,rid,refresh_existing=False)
@@ -123,9 +124,29 @@ class MonthlySyncTests(unittest.TestCase):
   for s,status,points in zip(self.live,['New','Disputed','Chargeable','Non-Chargeable'],[3,2,4,.5]):s['values'][0]=status;s['values'][15]=str(points)
   self.add(b);_,rows=self.book()
   self.assertEqual(len(rows),4);self.assertEqual([r[0] for r in rows],['New','Disputed','Chargeable','Non-Chargeable'])
-  self.assertEqual([r[13] for r in rows],[3,2,4,.5]);self.assertTrue(all(r[3]=='Search' and r[22]=='Searcher' for r in rows))
+  self.assertEqual([r[13] for r in rows],[3,2,4,.5]);self.assertTrue(all(r[3]=='Search' for r in rows))
+  self.assertEqual([r[22] for r in rows],['Searcher','Searcher','Searcher','Non-Chargeable'])
   self.assertEqual(self.fetches[-1],('2026-10-01','2026-10-03'))
   self.add(b);self.assertEqual(len(self.book()[1]),4)
+ def test_nonchargeable_refresh_overrides_saved_name_and_reversal_restores_it(self):
+  import openpyxl
+  original=self.source(1,'2026-10-01',status='Disputed');self.live=[copy.deepcopy(original)]
+  self.add(self.seed('2026-10-01','2026-10-01',[original]),self.real_build)
+  edits={'3':'Typing','20':'Corrected Typer','final':{'team':'Typing','name':'Reviewed name'}}
+  with self.db() as c:c.execute('INSERT INTO main_edits VALUES (?,?,?,?)',('2026-10','1',json.dumps(edits),'now'))
+  for status,want in [('Non-Chargeable','Non-Chargeable'),('Chargeable','Reviewed name')]:
+   self.live[0]['values'][0]=status
+   sync.refresh(ROOT,self.data,self.db,self.real_build,self.fetch,'2026-10')
+   file,rows=self.book();self.assertEqual(rows[0][22],want)
+   self.assertEqual((rows[0][3],rows[0][18],rows[0][20]),('Typing','Searcher','Corrected Typer'))
+   wb=openpyxl.load_workbook(file,data_only=True)
+   self.assertEqual(wb['SP 2']['W2'].value,want)
+   self.assertEqual(wb['Sheet1']['A4'].value,want)
+   self.assertEqual(wb['Sheet1']['B4'].value,1);wb.close()
+   formulas=openpyxl.load_workbook(file)
+   self.assertTrue(formulas['SP 2']['W2'].value.startswith('=IF(TRIM(A2)="Non-Chargeable","Non-Chargeable",'))
+   self.assertIn('Reviewed name',formulas['SP 2']['W2'].value);formulas.close()
+   self.assertEqual(manual_edits.load(self.db,'2026-10')['1'],edits)
  def test_private_roster_renames_existing_rows_without_losing_manual_corrections(self):
   original=self.source(1,'2026-10-01');original['id']='local-one'
   self.live=[copy.deepcopy(original)]
@@ -168,7 +189,7 @@ class MonthlySyncTests(unittest.TestCase):
     _,rows=self.book();self.assertEqual(len(rows),1)
     self.assertEqual(rows[0][0],status);self.assertEqual(rows[0][13],points)
     self.assertEqual(rows[0][14],(datetime(2026,10,3)-datetime(1899,12,30)).days)
-    self.assertEqual((rows[0][3],rows[0][22]),('Search','Searcher'))
+    self.assertEqual((rows[0][3],rows[0][22]),('Search','Non-Chargeable' if status=='Non-Chargeable' else 'Searcher'))
  def test_decisions_comments_refresh_even_without_status_change_and_missing_history_retains_book(self):
   original=self.source(1,'2026-10-01');self.live=[copy.deepcopy(original)];rid=self.seed('2026-10-01','2026-10-01',[original]);self.add(rid)
   current=self.live[0];current['values'][0]='Non-Chargeable'
@@ -279,7 +300,7 @@ class MonthlySyncTests(unittest.TestCase):
   self.live[0]['values'][0]='Non-Chargeable';self.live[0]['values'][15]='1'
   b=self.seed('2026-10-02','2026-10-02',[next_day]);self.add(b,self.real_build)
   file,rows=self.book();self.assertEqual(len(rows),3)
-  self.assertEqual((rows[0][3],rows[0][20:23]),('Typing',['Corrected Typer','','Corrected Typer']))
+  self.assertEqual((rows[0][3],rows[0][20:23]),('Typing',['Corrected Typer','','Non-Chargeable']))
   self.assertEqual(rows[1][22],'Reviewed Contributor');self.assertEqual(rows[2][22],'Searcher')
   self.assertEqual(rows[0][23:27],['Disputed','Our reply','Non-Chargeable','Client reply'])
   # Recollect the edited error's dates: corrections follow the error ID.

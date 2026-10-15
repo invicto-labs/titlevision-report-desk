@@ -5,6 +5,8 @@ from lxml import etree as E
 from copy import deepcopy
 from datetime import datetime,timedelta
 import json,re,sys
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
+import report_layout
 base=Path(sys.argv[1]).resolve()
 app=Path(__file__).resolve().parent.parent
 collection=json.loads((base/'collection.json').read_text(encoding='utf8'))
@@ -141,12 +143,13 @@ for i,r in enumerate(rows,2):
  team=r[3].strip();expected_contributor=team if team in {'Triage','VM Team','Leadership'} else r[18] if team=='Search' else r[20] if team in {'Type','Typing'} else ''
  override=(payload.get('contributorOverrides') or [None]*len(rows))[i-2]
  if override:expected_contributor=override['name']
+ if report_layout.non_chargeable(r):expected_contributor=report_layout.NON_CHARGEABLE
  assert (r[22] or '')==(expected_contributor or ''),'Contributor does not follow Team'
  for j,val in enumerate(r,1):
   actual=v['SP 2'].cell(i,j).value
   if j in {11,15,16} and val is not None:assert abs((actual-datetime(1899,12,30)).total_seconds()/86400-val)<1e-7
   else:assert (actual if actual is not None else '')==(val if val is not None else ''),(i,j,actual,val)
- assert f['SP 2'].cell(i,23).value.startswith('=IF(TRIM(D')
+ assert f['SP 2'].cell(i,23).value.startswith(f'=IF(TRIM(A{i})="Non-Chargeable","Non-Chargeable",')
  for j in range(1,28):
   if j!=23:assert f['SP 2'].cell(i,j).data_type!='f','Unexpected formula in source data'
 assert len(records)==len(rows) and all(len(r)==len(headers) for r in records)

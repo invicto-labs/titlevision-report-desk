@@ -74,7 +74,7 @@ def remember(db, month, sha256):
 
 def closed(path):
     # Excel creates this owner file while a workbook is open on an SMB share.
-    if path.with_name('~$' + path.name[2:]).exists():
+    if any(path.with_name('~$' + name).exists() for name in (path.name, path.name[2:])):
         raise ValueError(f'{path.name} is open in Excel. Ask the editor to save and close it, then sync again.')
 
 

@@ -42,7 +42,7 @@ const details=source.map(({values:r,id,statusFields,statusHistory})=>{
  if((team==='Search'&&!p.names[0])||(team==='Typing'&&!p.names[1]))issues.push({id,order:r[1],kind:'missing_name',message:`No completed human ${team==='Search'?'Search':'Typing'} task was recorded. Contributor left blank.`});
  if(/\b(?:VM|triage)\b/i.test(r[8])&&!['Triage','VM Team'].includes(team))issues.push({id,order:r[1],kind:'cause_review',message:'Notes mention VM or triage. Review the cause before overriding Team.'});
  const searcher=display(p.names[0],'Search',id,r[1]),typer=display(p.names[1],'Type',id,r[1]);
- const contributor=team==='Search'?searcher:team==='Typing'?typer:['Triage','VM Team'].includes(team)?team:'';
+ const contributor=String(r[0]).trim().toLowerCase()==='non-chargeable'?'Non-Chargeable':team==='Search'?searcher:team==='Typing'?typer:['Triage','VM Team'].includes(team)?team:'';
  if(statusHistory&&(!Array.isArray(statusFields)||statusFields.length!==4))throw Error('Status comment fields were not reconciled');
  const decision=statusFields??['','','',''];
  if(['Chargeable','Non-Chargeable'].includes(r[0])&&!decision[3])issues.push({id,order:r[1],kind:'missing_client_comment',message:'TitleVision has a final status but no identifiable client reply. Final status copied; comment left blank.'});
