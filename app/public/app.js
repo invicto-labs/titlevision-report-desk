@@ -8,7 +8,7 @@ function notice(message,error=false){busyNotice=false;connectionNotice='';$('not
 function connectionRestored(){connectionUnavailable=false;if(connectionNotice&&$('notice').textContent===connectionNotice)notice('');connectionNotice='';}
 function connectionFailed(error){
  connectionUnavailable=true;
- const message=['request_timeout','connection_lost','database_corrupt'].includes(error.code)?error.message:'Could not refresh Report Desk. '+error.message;
+ const message=['request_timeout','connection_lost','database_corrupt','database_guard'].includes(error.code)?error.message:'Could not refresh Report Desk. '+error.message;
  if(isViewer())overviewEmpty('Shared dashboard unavailable. Checking again automatically.');
  if(state?.update?.phase!=='installing'){notice(message,error.code!=='request_timeout');connectionNotice=message;}
  if(state)mainBooksDisplay();
@@ -26,6 +26,10 @@ async function api(url,body){
 }
 function responseError(result){
  const error=Error(result.error||'Request failed');error.code=result.code;
+ if(result.code==='database_guard'){
+  if(state){state.activity=result.activity;state.csrf=result.csrf;mainBooksDisplay();}
+  else if(result.activity?.cancellable){state={csrf:result.csrf,activity:result.activity,runs:[],mainBooks:[],update:{},pcRole:'collector'};mainBooksDisplay();}
+ }
  if(result.code==='worker_busy'&&state){state.activity=result.activity;mainBooksDisplay();}
  return error;
 }

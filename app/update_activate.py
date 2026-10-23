@@ -115,8 +115,9 @@ def activate(old_pid,old_root):
    old_names=old_root/'app/templates/names.json'
    if not (data/'names.json').exists() and old_names.exists():(data/'names.json').write_bytes(old_names.read_bytes())
    status('installing','Starting version '+version)
-   schedule(root)
    subprocess.run(['taskkill','/PID',str(old_pid),'/F'],capture_output=True,check=True,creationflags=0x08000000);stopped=True
+   # Migrate only after the old engine is stopped; it uses the legacy database.
+   schedule(root)
    new_process=python_start(root)
    wait_ready(new_process)
    status('complete','Updated to version '+version+'. Your settings and reports are preserved.');return

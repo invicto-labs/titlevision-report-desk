@@ -11,11 +11,14 @@ import main_workbook,monthly_sync,manual_edits,name_mapping,shared_workbook,dash
 import shared_view
 import history_cache
 import database_backup
+import state_store
 from operation_control import configure,check_cancelled,Cancelled
 ROOT=Path(__file__).resolve().parent
 PORTABLE=(ROOT/'portable.json').exists()
 DATA=Path(os.environ.get('TITLEVISION_DATA',Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'TitleVision Report Desk/data' if PORTABLE else ROOT/'data')).resolve();DATA.mkdir(parents=True,exist_ok=True)
 PORT=int(os.environ.get('TITLEVISION_PORT','8765'));IST=timezone(timedelta(hours=5,minutes=30));TOKEN=secrets.token_urlsafe(32)
+STORE=state_store.Store(DATA)
+INITIALIZED=False
 OPERATIONS=configure(DATA)
 NODE=Path(os.environ.get('TITLEVISION_NODE',ROOT.parent/'runtime/node/node.exe' if PORTABLE else Path.home()/'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'))
 CREATE_NO_WINDOW=0x08000000 if os.name=='nt' else 0
@@ -38,12 +41,11 @@ def open_http_server():
    time.sleep(.25)
 @contextmanager
 def db():
- c=sqlite3.connect(DATA/'reporting.sqlite',timeout=30);c.row_factory=sqlite3.Row
- try:
-  with c:yield c
- finally:c.close()
+ with STORE.connect() as c:yield c
 def initialize():
+ global INITIALIZED
  with db() as c:
+  if [tuple(r) for r in c.execute('PRAGMA integrity_check')]!=[('ok',)]:STORE.fail('Database integrity check failed at startup.')
   c.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY,value TEXT NOT NULL)')
   c.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY,start TEXT,end TEXT,status TEXT,message TEXT,created TEXT,count INTEGER,points REAL,issues INTEGER,scheduled_day TEXT)')
   c.execute('CREATE UNIQUE INDEX IF NOT EXISTS scheduled_once ON runs(scheduled_day) WHERE scheduled_day IS NOT NULL')
@@ -51,6 +53,7 @@ def initialize():
   shared_workbook.initialize(c)
   c.execute('CREATE TABLE IF NOT EXISTS main_auto_pending (run_id TEXT PRIMARY KEY, created TEXT NOT NULL)')
  backup_database()
+ INITIALIZED=True
 
 def backup_database():
  try:database_backup.create(DATA)
@@ -122,6 +125,11 @@ def worker_busy():
  try:
   with RunLock(probe=True):return False
  except (ValueError,OSError):return True
+
+def safe_activity():
+ busy=worker_busy();operation=OPERATIONS.read() if busy else None
+ return {'busy':busy,'message':'Database verification failed; stop the current operation.' if busy else '',
+         'operationId':operation['id'] if operation else None,'cancellable':bool(operation),'stopping':bool(operation and OPERATIONS.marker(operation['id']).exists())}
 
 def activity_state(busy=None):
  if busy is None:busy=worker_busy()
@@ -355,13 +363,15 @@ class Handler(BaseHTTPRequestHandler):
  def database_error(self,error):
   if database_backup.corrupt(error):return self.send(503,{'code':'database_corrupt','error':'Report Desk’s local database needs repair. Your saved Excel files are retained. Stop collection and restore a verified database backup before continuing.'})
   return self.send(400,{'error':str(error)})
+ def state_error(self,error):
+  return self.send(503,{'code':'database_guard','error':str(error),'csrf':TOKEN,'activity':safe_activity()})
  def guard(self,write=False):
   if self.headers.get('Host') not in {f'127.0.0.1:{PORT}',f'localhost:{PORT}'}:raise ValueError('Invalid host')
   if write and (self.headers.get('X-CSRF-Token')!=TOKEN or self.headers.get('Origin') not in {f'http://127.0.0.1:{PORT}',f'http://localhost:{PORT}'}):raise ValueError('Invalid request origin')
  def do_GET(self):
   try:
    self.guard();p=urlparse(self.path).path
-   if p=='/api/health':return self.send(200,{'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'processId':os.getpid(),'ready':True})
+   if p=='/api/health':return self.send(200,{'edition':'portable-1' if PORTABLE else 'local','version':UPDATES.config['version'],'processId':os.getpid(),'ready':INITIALIZED and not STORE.fault.exists()})
    if p=='/api/state':return self.send(200,public_state())
    if p.startswith('/api/main/') and p.endswith('/summary'):
     chunks=p.split('/')
@@ -400,12 +410,20 @@ class Handler(BaseHTTPRequestHandler):
    self.send(200,(ROOT/'public'/files[p]).read_bytes(),kind)
   except (BrokenPipeError,ConnectionAbortedError,ConnectionResetError):return
   except WorkerBusy:self.send_busy()
+  except state_store.StateFault as error:self.state_error(error)
   except sqlite3.Error as error:self.database_error(error)
   except (ValueError,OSError,sqlite3.Error) as e:self.send(400,{'error':str(e)})
  def do_POST(self):
   try:
    self.guard(True);length=int(self.headers.get('Content-Length','0'))
    p=urlparse(self.path).path
+   # Stop must remain usable even when the database has failed validation.
+   if p=='/api/operation/stop':
+    if length<=0 or length>8192:raise ValueError('Request too large')
+    obj=json.loads(self.rfile.read(length))
+    if not isinstance(obj,dict):raise ValueError('Request must be a JSON object.')
+    if not worker_busy():return self.send(200,{'message':'The operation has already finished.'})
+    return self.send(202,OPERATIONS.request(obj.get('operationId')))
    if shared_view.enabled(db) and p not in ('/api/shared/viewer','/api/shared/collector','/api/shared/sync','/api/update/check','/api/update/install','/api/update/cancel','/api/update/token'):
     raise ValueError('This PC is a viewer. Change reports and refresh source statuses on the designated report PC.')
    if p=='/api/main/edits':
@@ -433,9 +451,6 @@ class Handler(BaseHTTPRequestHandler):
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
      result=shared_view.configure(db,obj.get('path')) if p.endswith('/viewer') else shared_view.collector(db)
     return self.send(200,result)
-   if p=='/api/operation/stop':
-    if not worker_busy():return self.send(200,{'message':'The operation has already finished.'})
-    return self.send(202,OPERATIONS.request(obj.get('operationId')))
    if p=='/api/shared/configure':
     with RunLock():
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
@@ -510,10 +525,14 @@ class Handler(BaseHTTPRequestHandler):
   except Cancelled:self.send(200,{'cancelled':True,'message':str(Cancelled())})
   except (BrokenPipeError,ConnectionAbortedError,ConnectionResetError):return
   except WorkerBusy:self.send_busy()
+  except state_store.StateFault as error:self.state_error(error)
   except sqlite3.Error as error:self.database_error(error)
   except (ValueError,KeyError,sqlite3.Error,subprocess.SubprocessError,OSError) as e:self.send(400,{'error':str(e)})
 if __name__=='__main__':
- initialize()
+ try:initialize()
+ except state_store.StateFault as error:
+  print(str(error),file=sys.stderr,flush=True)
+  if any(arg in sys.argv for arg in ('--scheduled','--enable-schedule','--update-schedule-if-enabled','--store-credentials')):raise SystemExit(1)
  if '--store-credentials' in sys.argv:
   secret=json.load(sys.stdin);store_credentials(secret['username'],secret['password']);print('Credentials encrypted for this Windows account.')
  elif '--scheduled' in sys.argv:scheduled()

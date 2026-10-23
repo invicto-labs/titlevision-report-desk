@@ -1,3 +1,11 @@
+## Version 1.4.22
+
+- Migrate verified local data to a protected, version-independent store while retaining the original database and existing backups.
+- Serialize desktop and scheduled database access and verify transactions against durable commit records to detect unexpected rollback, replacement or loss of settings and edits.
+- Recover interrupted saves only when they match the recorded transaction; otherwise pause changes and preserve saved workbooks.
+- Keep ten recent verified snapshots plus daily snapshots for thirty days, with a diagnostic database event log.
+- Keep Stop process available when database verification fails. Stop the previous engine before migrating during an update.
+
 ## Version 1.4.21
 
 - Recognize both Excel owner-file naming patterns before importing or replacing a shared workbook, so an open file produces a clear close-and-sync message.

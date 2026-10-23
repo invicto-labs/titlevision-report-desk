@@ -11,6 +11,13 @@ function harness(){
  vm.runInContext("state={activity:{busy:false,message:''},runs:[],mainBooks:[{month:'2026-10',count:2,days:1}],sharedFolder:'test-share',phase2:{enabled:true,currentMonth:'2026-10'},update:{}};",context);
  return {context,element,requests,run:code=>vm.runInContext(code,context)};
 }
+
+test('database guard keeps Stop available even on the first page load',()=>{
+ const h=harness();h.run("state=null;reportError(responseError({code:'database_guard',error:'Verification failed',csrf:'safe-token',activity:{busy:true,cancellable:true,operationId:'active'}}));overviewControls();");
+ assert.equal(h.element('stop-process').hidden,false);
+ assert.equal(h.element('stop-process').disabled,false);
+ assert.equal(h.element('run').disabled,true);
+});
 test('a refresh disables conflicting actions immediately and rejects a second click',async()=>{
  const h=harness();h.run("manageMain('refresh','2026-10')");
  assert.equal(h.element('run').disabled,true);

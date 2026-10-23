@@ -20,6 +20,18 @@ class ServerTests(unittest.TestCase):
   with patch.object(server,'db',side_effect=RuntimeError('database busy')):
    with urllib.request.urlopen(self.url+'/api/health') as response:value=json.load(response)
   self.assertTrue(value['ready']);self.assertEqual(value['processId'],os.getpid());self.assertNotIn('csrf',value)
+ def test_stop_remains_available_when_database_is_blocked(self):
+  with patch.object(server,'db',side_effect=server.state_store.StateFault('blocked')),patch.object(server,'worker_busy',return_value=True),patch.object(server.OPERATIONS,'request',return_value={'message':'Stopping'}) as stop:
+   with self.post('/api/operation/stop',{'operationId':'current'}) as response:self.assertEqual(response.status,202)
+   stop.assert_called_once_with('current')
+ def test_guard_response_includes_stop_state_and_health_not_ready(self):
+  with patch.object(server,'public_state',side_effect=server.state_store.StateFault('verification failed')),patch.object(server,'safe_activity',return_value={'busy':True,'cancellable':True,'operationId':'current'}):
+   with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(self.url+'/api/state')
+   value=json.load(error.exception);self.assertEqual(value['code'],'database_guard');self.assertEqual(value['csrf'],server.TOKEN);self.assertTrue(value['activity']['cancellable'])
+  server.STORE.fault.write_text('{}')
+  try:
+   with urllib.request.urlopen(self.url+'/api/health') as response:self.assertFalse(json.load(response)['ready'])
+  finally:server.STORE.fault.unlink()
  def test_corrupt_database_reports_repair_required_without_claiming_network_failure(self):
   with patch.object(server,'public_state',side_effect=server.sqlite3.DatabaseError('database disk image is malformed')):
    with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(self.url+'/api/state')
