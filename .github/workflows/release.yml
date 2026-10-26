@@ -42,6 +42,8 @@ jobs:
           'TITLEVISION_NODE_MODULES=' + (Join-Path $env:GITHUB_WORKSPACE '.build/node_modules') >> $env:GITHUB_ENV
       - name: Test
         run: |
+          python app/tests/test_scheduler_client.py
+          if ($LASTEXITCODE -ne 0) { throw 'Single engine scheduling tests failed' }
           python app/tests/test_state_store.py
           if ($LASTEXITCODE -ne 0) { throw 'Database continuity tests failed' }
           python app/tests/test_server.py

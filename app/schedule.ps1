@@ -8,5 +8,5 @@ if(-not (Test-Path -LiteralPath $hiddenPython)){$hiddenPython=$Python}
 $taskAction=New-ScheduledTaskAction -Execute $hiddenPython -Argument ('"'+(Join-Path $App 'server.py')+'" --scheduled') -WorkingDirectory $App
 $taskTrigger=New-ScheduledTaskTrigger -Daily -At '08:45'
 $taskPrincipal=New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
-$taskSettings=New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 3) -MultipleInstances IgnoreNew
+$taskSettings=New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName $taskName -Action $taskAction -Trigger $taskTrigger -Principal $taskPrincipal -Settings $taskSettings -Description 'Collect the previous business day, or Friday through Sunday on Monday, at 08:45 India time. Verified reports update Main workbooks. Requires this Windows user signed in and the computer awake.' -Force | Out-Null

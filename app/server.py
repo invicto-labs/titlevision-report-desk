@@ -424,7 +424,7 @@ class Handler(BaseHTTPRequestHandler):
     if not isinstance(obj,dict):raise ValueError('Request must be a JSON object.')
     if not worker_busy():return self.send(200,{'message':'The operation has already finished.'})
     return self.send(202,OPERATIONS.request(obj.get('operationId')))
-   if shared_view.enabled(db) and p not in ('/api/shared/viewer','/api/shared/collector','/api/shared/sync','/api/update/check','/api/update/install','/api/update/cancel','/api/update/token'):
+   if shared_view.enabled(db) and p not in ('/api/scheduler/wake','/api/shared/viewer','/api/shared/collector','/api/shared/sync','/api/update/check','/api/update/install','/api/update/cancel','/api/update/token'):
     raise ValueError('This PC is a viewer. Change reports and refresh source statuses on the designated report PC.')
    if p=='/api/main/edits':
     if length<=0 or length>12*1024*1024:raise ValueError('Choose an Excel workbook smaller than 12 MB.')
@@ -446,6 +446,9 @@ class Handler(BaseHTTPRequestHandler):
    if length<=0 or length>8192:raise ValueError('Request too large')
    obj=json.loads(self.rfile.read(length))
    if not isinstance(obj,dict):raise ValueError('Request must be a JSON object.')
+   if p=='/api/scheduler/wake':
+    scheduled(True)
+    return self.send(200,{'message':'Daily schedule checked by the running engine.'})
    if p in ('/api/shared/viewer','/api/shared/collector'):
     with RunLock(allow_viewer=True):
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
@@ -529,6 +532,14 @@ class Handler(BaseHTTPRequestHandler):
   except sqlite3.Error as error:self.database_error(error)
   except (ValueError,KeyError,sqlite3.Error,subprocess.SubprocessError,OSError) as e:self.send(400,{'error':str(e)})
 if __name__=='__main__':
+ if '--scheduled' in sys.argv:
+  import scheduler_client
+  scheduler_client.wake(ROOT,DATA,PORT,sys.executable)
+  raise SystemExit(0)
+ # Claim exclusive server ownership before any database initialization.
+ # A second launcher must never migrate, back up or modify the database.
+ command=any(arg in sys.argv for arg in ('--enable-schedule','--update-schedule-if-enabled','--store-credentials'))
+ http=None if command else open_http_server()
  try:initialize()
  except state_store.StateFault as error:
   print(str(error),file=sys.stderr,flush=True)
@@ -540,6 +551,6 @@ if __name__=='__main__':
  elif '--update-schedule-if-enabled' in sys.argv:
   if setting('schedule',False):install_schedule(True)
  else:
-  http=open_http_server();threading.Thread(target=schedule_loop,daemon=True).start();print(f'TitleVision Report Desk: http://127.0.0.1:{PORT}',flush=True)
+  threading.Thread(target=schedule_loop,daemon=True).start();print(f'TitleVision Report Desk: http://127.0.0.1:{PORT}',flush=True)
   if '--open' in sys.argv:webbrowser.open(f'http://127.0.0.1:{PORT}')
   http.serve_forever()

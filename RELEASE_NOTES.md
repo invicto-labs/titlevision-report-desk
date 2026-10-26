@@ -1,3 +1,10 @@
+## Version 1.4.23
+
+- Route Windows scheduled runs through the active report engine instead of opening a separate database writer.
+- Reserve the exclusive local server port before database initialization; a competing app launch cannot migrate or back up a different database state.
+- Fail safely when the active engine needs repair or is unreachable; do not start another writer after a timeout.
+- Start the desktop engine when the scheduler finds no running app. Remove the task time limit that could otherwise terminate that engine during later work.
+
 ## Version 1.4.22
 
 - Migrate verified local data to a protected, version-independent store while retaining the original database and existing backups.
