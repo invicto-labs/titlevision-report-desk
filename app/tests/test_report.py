@@ -6,6 +6,25 @@ app=Path(__file__).resolve().parents[1]
 S='http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 ns={'x':S}
 class ReportTests(unittest.TestCase):
+ def test_case_only_names_share_one_pivot_item_without_changing_source(self):
+  sys.path.insert(0,str(app));import report_layout,openpyxl
+  folder=app/'tests/results'/('report-case-names-'+uuid.uuid4().hex);folder.mkdir(parents=True)
+  rows=[]
+  for i,name in enumerate(('Sample Person','sample person','Other Person'),1):
+   row=['']*27;row[0]='Accepted';row[1]='Test-'+str(i);row[3]='Search';row[12]='CA';row[13]=i;row[18]=row[22]=name;row[10]=row[14]=row[15]=46282;rows.append(row)
+  (folder/'payload.json').write_text(json.dumps({'data':[report_layout.HEADERS,*rows],'tableName':'TitleVisionErrors'}))
+  (folder/'collection.json').write_text(json.dumps({'count':3,'points':6}))
+  for script in ('build_portable.py','finish.py'):
+   r=subprocess.run([sys.executable,str(app/'report'/script),str(folder)],capture_output=True,text=True);self.assertEqual(r.returncode,0,r.stderr)
+  with zipfile.ZipFile(folder/'report.xlsx') as z:
+   cache=E.fromstring(z.read('xl/pivotCache/pivotCacheDefinition1.xml'));items=cache.find('x:cacheFields',ns)[22].find('x:sharedItems',ns)
+   self.assertEqual([e.get('v') for e in items],['Other Person','Sample Person'])
+   records=E.fromstring(z.read('xl/pivotCache/pivotCacheRecords1.xml'));self.assertEqual([r[22].get('v') for r in records],['1','1','0'])
+  wb=openpyxl.load_workbook(folder/'report.xlsx',data_only=True)
+  self.assertEqual([wb['SP 2'].cell(i,23).value for i in range(2,5)],['Sample Person','sample person','Other Person'])
+  self.assertEqual([wb['Sheet1'].cell(5,j).value for j in (1,2,3)],['Sample Person',2,3])
+  self.assertEqual([wb['Sheet1'].cell(6,j).value for j in (2,3)],[3,6]);wb.close()
+  print('REPORT_FIXTURE='+str(folder/'report.xlsx'))
  def test_historical_team_edits_keep_their_final_name(self):
   sys.path.insert(0,str(app))
   import report_layout,manual_edits
@@ -58,7 +77,7 @@ class ReportTests(unittest.TestCase):
       self.assertEqual(pivot.find('x:dataFields',ns)[0].get('fld'),'12')
      for shared in cache.findall('x:cacheFields/x:cacheField/x:sharedItems',ns):
       if shared.get('count') is not None:self.assertEqual(shared.get('containsBlank')=='1',shared.find('x:m',ns) is not None)
-    self.assertEqual(json.loads((folder/'validation.json').read_text())['workbookFormatVersion'],4)
+    self.assertEqual(json.loads((folder/'validation.json').read_text())['workbookFormatVersion'],5)
     if rows:
      import openpyxl
      sheet=openpyxl.load_workbook(folder/'report.xlsx')['SP 2']

@@ -35,6 +35,8 @@ with ZipFile(base/'base.xlsx') as z:parts={n:z.read(n) for n in z.namelist()}
 with ZipFile(app/'templates/pivot-parts.zip') as z:template={n:z.read(n) for n in z.namelist()}
 # Native cache strategy: use shared indexes for pivot dimensions and inline records elsewhere.
 shared={p['field']:p['items'] for p in payload['specs']}
+shared_indexes={j:{report_layout.pivot_key(v):i for i,v in enumerate(values)} for j,values in shared.items()}
+assert all(len(shared_indexes[j])==len(values) for j,values in shared.items()),'Duplicate case-insensitive pivot cache item'
 cache=root('pivotCacheDefinition',{'{'+R+'}id':'rId1','refreshOnLoad':'1','createdVersion':'6','refreshedVersion':'8','minRefreshableVersion':'3','recordCount':str(len(rows))})
 source=sub(cache,'cacheSource',{'type':'worksheet'});sub(source,'worksheetSource',{'name':payload['tableName']})
 fields=sub(cache,'cacheFields',{'count':str(len(headers))})
@@ -56,7 +58,7 @@ records=root('pivotCacheRecords',{'count':str(len(rows))})
 for r in rows:
  rec=sub(records,'r')
  for j,v in enumerate(r):
-  if j in shared:sub(rec,'x',{'v':str(shared[j].index(v if v is not None else ''))})
+  if j in shared:sub(rec,'x',{'v':str(shared_indexes[j][report_layout.pivot_key(v)])})
   else:atom(rec,v,j)
 parts['xl/pivotCache/pivotCacheDefinition1.xml']=xml(cache);parts['xl/pivotCache/pivotCacheRecords1.xml']=xml(records)
 cr=relroot();rel(cr,'rId1','pivotCacheRecords','pivotCacheRecords1.xml');parts['xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels']=xml(cr)
@@ -154,8 +156,8 @@ for i,r in enumerate(rows,2):
   if j!=23:assert f['SP 2'].cell(i,j).data_type!='f','Unexpected formula in source data'
 assert len(records)==len(rows) and all(len(r)==len(headers) for r in records)
 for p in payload['specs']:
- assert sum(1 for r in rows if (r[p['field']] if r[p['field']] is not None else '') in p['items'])==len(rows)
- print(p['name'],p['height'],[(name,sum((r[p['field']] if r[p['field']] is not None else '')==name for r in rows)) for name in p['items']])
+ assert sum(1 for r in rows if report_layout.pivot_key(r[p['field']]) in shared_indexes[p['field']])==len(rows)
+ print(p['name'],p['height'],[(name,sum(report_layout.pivot_key(r[p['field']])==report_layout.pivot_key(name) for r in rows)) for name in p['items']])
 print(f'Validated {len(rows)} source records, {expected_points} points, all formulas, dropdown, 4 native PivotTables and complete drill records.')
 print(out)
 
@@ -165,4 +167,4 @@ with ZipFile(out) as z:
  for name in z.namelist():
   if name.endswith('.xml') or name.endswith('.rels'): E.fromstring(z.read(name))
 assert collection['count']==len(rows)
-(base/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':4,'count':len(rows),'points':expected_points,'pivots':4,'sourceRowsReconciled':True,'formulasVerified':True}),encoding='utf8')
+(base/'validation.json').write_text(json.dumps({'passed':True,'workbookFormatVersion':5,'count':len(rows),'points':expected_points,'pivots':4,'sourceRowsReconciled':True,'formulasVerified':True}),encoding='utf8')

@@ -1,3 +1,8 @@
+## Version 1.4.24
+
+- Fix Excel repair warnings when contributor names differ only in capitalization. Share one case-insensitive PivotTable cache item while preserving the exact names in SP 2.
+- Keep all four native PivotTables, error counts, points and drill-down records intact. Regenerate older daily downloads using the corrected workbook format.
+- Add regression coverage for case-only names and matching summary totals.
 ## Version 1.4.23
 
 - Route Windows scheduled runs through the active report engine instead of opening a separate database writer.
@@ -253,3 +258,4 @@ Download the latest main workbook from its month in the app. Edits made to downl
 - Add report regression tests and Microsoft's Open XML format validator to release checks.
 
 Saved sign-in details, reports and the daily schedule are preserved.
+

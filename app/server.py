@@ -335,7 +335,7 @@ def downloadable_report(folder):
  def ready(directory):
   try:
    checked=json.loads((directory/'validation.json').read_text(encoding='utf8'))
-   return checked.get('passed') and checked.get('workbookFormatVersion')==4 and (directory/'report.xlsx').is_file()
+   return checked.get('passed') and checked.get('workbookFormatVersion')==5 and (directory/'report.xlsx').is_file()
   except (OSError,ValueError):return False
  if ready(folder):return folder/'report.xlsx'
  corrected=folder/'workbook-v4'

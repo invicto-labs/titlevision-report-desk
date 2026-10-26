@@ -59,7 +59,7 @@ def build(folder):
  for p in payload['specs']:
   matrix=[[p['title'],'Error Counts','Sum of Points']]
   for item in p['items']:
-   match=[r for r in rows if (r[p['field']] if r[p['field']] is not None else '')==item]
+   match=[r for r in rows if report_layout.pivot_key(r[p['field']])==report_layout.pivot_key(item)]
    matrix.append([item if item!='' else '(blank)',sum(r[12] not in (None,'') for r in match),sum(r[13] for r in match)])
   matrix.append(['Grand Total',sum(r[12] not in (None,'') for r in rows),collection['points']])
   for i,row in enumerate(matrix):

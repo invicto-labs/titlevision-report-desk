@@ -30,6 +30,11 @@ def normalize_values(row):
     if row[22] == 'VM team': row[22] = 'VM Team'
     return row
 
+def pivot_key(value):
+    """Excel groups text case-insensitively; source cell spelling is unchanged."""
+    if value is None:value=''
+    return ('text',value.casefold()) if isinstance(value,str) else ('number',value)
+
 def pivot_specs(rows):
     specs = []
     next_row = 3
@@ -39,8 +44,11 @@ def pivot_specs(rows):
         ('ErrorsByTeam',3,'Team',4,11),
         ('ErrorsByPoints',13,'Points',4,19),
     ]:
-        items = {r[field] if r[field] is not None else '' for r in rows}
-        items = sorted(items, key=lambda v: (v == '', v if isinstance(v,(int,float)) else str(v).casefold()))
+        canonical = {}
+        for r in rows:
+            value=r[field] if r[field] is not None else ''
+            canonical.setdefault(pivot_key(value),value)
+        items = sorted(canonical.values(), key=lambda v: (v == '', v if isinstance(v,(int,float)) else str(v).casefold()))
         row = max(preferred, next_row) if col else preferred
         specs.append(dict(name=name,field=field,title=title,col=col,row=row,items=items,height=len(items)+2))
         if col: next_row = row + len(items) + 3
