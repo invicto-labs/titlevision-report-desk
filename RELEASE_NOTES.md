@@ -1,3 +1,11 @@
+## Version 1.4.25
+
+- Fix repeated shared workbook publication failures when Windows/SMB allows writing but denies replacing an existing file by rename.
+- Keep atomic replacement as the first choice. On Windows access-denied replacement failures, require exclusive read/write access, recheck the imported baseline, save a verified backup and write/verify the new workbook under the same lock.
+- Restore and verify the original bytes if the locked write fails. Keep the previous sync baseline on failure, and report shared publication as pending if Excel or folder permissions still block access.
+- Back up existing shared workbooks before publication and avoid replacing a byte-identical workbook during unchanged syncs.
+- Add native Windows tests for exclusive access, denied replacement, rollback and edits saved during publication.
+
 ## Version 1.4.24
 
 - Fix Excel repair warnings when contributor names differ only in capitalization. Share one case-insensitive PivotTable cache item while preserving the exact names in SP 2.

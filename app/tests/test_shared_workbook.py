@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import sqlite3
+import os
 import sys
 import unittest
 
@@ -125,6 +126,68 @@ class SharedWorkbookTests(unittest.TestCase):
                         shared.pull(self.place, self.place, self.db, None, self.month)
                     self.assertEqual(self.target.read_bytes(), b'first validated workbook')
                 finally: owner.unlink()
+
+    def denied_rename(self):
+        error = PermissionError('SMB permits writing but denies replacement')
+        error.winerror = 5
+        return error
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows exclusive-file API')
+    def test_denied_replace_saves_exclusively_with_verified_backup(self):
+        shared.publish(self.place, self.db, self.month)
+        original = self.target.read_bytes()
+        self.local.write_bytes(b'new verified data with different length')
+        with patch.object(Path, 'replace', side_effect=self.denied_rename()):
+            shared.publish(self.place, self.db, self.month)
+        self.assertEqual(self.target.read_bytes(), self.local.read_bytes())
+        self.assertEqual(shared.expected(self.db, self.month), shared.digest(self.local.read_bytes()))
+        self.assertTrue(any(p.read_bytes() == original for p in (self.place/'Backups').glob('*.xlsx')))
+        self.assertEqual(list(self.place.glob('*.tmp')), [])
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows exclusive-file API')
+    def test_failed_exclusive_write_restores_previous_bytes_and_baseline(self):
+        shared.publish(self.place, self.db, self.month)
+        original = self.target.read_bytes(); previous = shared.expected(self.db, self.month)
+        self.local.write_bytes(b'new verified workbook')
+        write = shared.write_locked
+        def fail_once(stream, content):
+            if content != original:
+                stream.seek(0); stream.write(b'partial'); stream.flush()
+                raise OSError('Connection interrupted during save')
+            write(stream, content)
+        with patch.object(Path, 'replace', side_effect=self.denied_rename()), patch.object(shared, 'write_locked', side_effect=fail_once):
+            with self.assertRaisesRegex(ValueError, 'previous workbook was restored'):
+                shared.publish(self.place, self.db, self.month)
+        self.assertEqual(self.target.read_bytes(), original)
+        self.assertEqual(shared.expected(self.db, self.month), previous)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows exclusive-file API')
+    def test_other_open_handle_blocks_fallback_without_overwriting(self):
+        shared.publish(self.place, self.db, self.month)
+        original = self.target.read_bytes()
+        with shared.exclusive_file(self.target):
+            with self.assertRaisesRegex(ValueError, 'Shared update pending'):
+                shared.save_exclusively(self.target, b'new bytes', shared.digest(original))
+        self.assertEqual(self.target.read_bytes(), original)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows exclusive-file API')
+    def test_edit_saved_between_replace_failure_and_fallback_is_retained(self):
+        shared.publish(self.place, self.db, self.month)
+        previous = shared.expected(self.db, self.month)
+        self.local.write_bytes(b'new verified workbook')
+        def late_edit(*args):
+            self.target.write_bytes(b'a teammates latest correction')
+            raise self.denied_rename()
+        with patch.object(Path, 'replace', side_effect=late_edit):
+            with self.assertRaisesRegex(ValueError, 'changed during publishing'):
+                shared.publish(self.place, self.db, self.month)
+        self.assertEqual(self.target.read_bytes(), b'a teammates latest correction')
+        self.assertEqual(shared.expected(self.db, self.month), previous)
+
+    def test_unchanged_sync_does_not_replace_workbook(self):
+        shared.publish(self.place, self.db, self.month)
+        with patch.object(Path, 'replace', side_effect=AssertionError('Unnecessary replacement')):
+            shared.publish(self.place, self.db, self.month)
 
 
 if __name__ == '__main__':

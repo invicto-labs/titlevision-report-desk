@@ -5,6 +5,7 @@ credentials remain local; an edited shared workbook is imported through the
 existing verified manual-edits path before the next monthly rebuild.
 """
 from pathlib import Path
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -13,6 +14,81 @@ import uuid
 
 import main_workbook
 import manual_edits
+
+
+def backup(path, content):
+    location = path.parent / 'Backups'
+    location.mkdir(exist_ok=True)
+    saved = location / (path.stem + '-before-sync-' + uuid.uuid4().hex + '.xlsx')
+    with saved.open('xb') as stream:
+        stream.write(content)
+    if digest(saved.read_bytes()) != digest(content):
+        raise ValueError('Shared workbook backup failed verification; update was not saved.')
+    return saved
+
+
+@contextmanager
+def exclusive_file(path):
+    """Require Windows to deny every other reader/writer during in-place saving."""
+    if os.name != 'nt':
+        raise ValueError('Exclusive shared-file saving requires Windows.')
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    handle = create(str(path), 0xC0000000, 0, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
+    except BaseException:
+        close = kernel.CloseHandle
+        close.argtypes = [wintypes.HANDLE]
+        close(handle)
+        raise
+    with os.fdopen(fd, 'r+b') as stream:
+        yield stream
+
+
+def write_locked(stream, content):
+    stream.seek(0)
+    if stream.write(content) != len(content):
+        raise OSError('Incomplete shared workbook write')
+    stream.truncate(len(content))
+    stream.flush()
+    os.fsync(stream.fileno())
+    stream.seek(0)
+    if digest(stream.read()) != digest(content):
+        raise OSError('Shared workbook write failed verification')
+
+
+def save_exclusively(path, content, baseline):
+    """SMB can allow writes but deny rename/delete. Never relax edit/lock checks."""
+    closed(path)
+    try:
+        with exclusive_file(path) as stream:
+            original = stream.read()
+            if digest(original) != baseline:
+                raise ValueError('The shared workbook changed during publishing. Sync again.')
+            saved = backup(path, original)
+            from operation_control import check_cancelled
+            check_cancelled()
+            # Complete or roll back under the same exclusive lock; cancellation
+            # must not interrupt a partially written workbook.
+            try:
+                write_locked(stream, content)
+            except Exception as error:
+                try:
+                    write_locked(stream, original)
+                except Exception as restore_error:
+                    raise ValueError(f'Shared save and rollback failed. Restore the verified backup: {saved}') from restore_error
+                raise ValueError('Shared save failed; the previous workbook was restored. Sync again.') from error
+    except OSError as error:
+        raise ValueError('Shared update pending. Close the workbook on every PC and check shared-folder write access, then sync again.') from error
 
 
 def initialize(connection):
@@ -155,11 +231,15 @@ def publish(data, db, month):
     previous = expected(db, month)
     if path.exists():
         closed(path)
-        actual = digest(path.read_bytes())
+        original = path.read_bytes()
+        actual = digest(original)
         if previous is None and actual != digest(new):
             raise ValueError(f'{path.name} already exists and was not published by this app.')
         if previous is not None and actual != previous:
             raise ValueError(f'{path.name} changed during refresh. The shared copy was retained; sync again.')
+        if actual == digest(new):
+            remember(db, month, actual)
+            return str(path)
     elif previous is not None:
         raise ValueError(f'{path.name} is missing from the shared folder. Restore it before publishing.')
     staged = path.with_name('.' + path.name + '.' + uuid.uuid4().hex + '.tmp')
@@ -174,10 +254,20 @@ def publish(data, db, month):
                 raise ValueError('The shared workbook changed during publishing. Sync again.')
         from operation_control import check_cancelled
         check_cancelled()
+        if path.exists():
+            original = path.read_bytes()
+            if digest(original) != (previous or digest(new)):
+                raise ValueError('The shared workbook changed during publishing. Sync again.')
+            backup(path, original)
         try:
             staged.replace(path)
         except OSError as exc:
-            raise ValueError('Excel or the network share blocked replacing the workbook. Close it and sync again.') from exc
+            if os.name == 'nt' and getattr(exc, 'winerror', None) == 5 and path.exists():
+                save_exclusively(path, new, previous or digest(new))
+            else:
+                raise ValueError('Shared update pending. Excel or the network share blocked replacing the workbook. Close it and sync again.') from exc
+        if digest(path.read_bytes()) != digest(new):
+            raise ValueError('Shared save could not be verified. Sync again before marking it complete.')
         remember(db, month, digest(new))
         return str(path)
     finally:
