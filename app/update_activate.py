@@ -3,7 +3,11 @@ from pathlib import Path
 import ctypes,json,msvcrt,os,socket,subprocess,sys,time,urllib.request,uuid
 from ctypes import wintypes
 root=Path(__file__).resolve().parent.parent
-data=Path(os.environ['LOCALAPPDATA'])/'TitleVision Report Desk/data';data.mkdir(parents=True,exist_ok=True)
+def data_location(version_root, environment):
+ if version_root.parent.name=='versions' and version_root.parents[1].name=='TitleVision Report Desk' and version_root.parents[2].name=='Programs':
+  return version_root.parents[3]/'TitleVision Report Desk/data'
+ return Path(environment['LOCALAPPDATA'])/'TitleVision Report Desk/data'
+data=data_location(root,os.environ);data.mkdir(parents=True,exist_ok=True)
 version=json.loads((root/'app/version.json').read_text(encoding='utf8'))['version']
 result_file=None
 # Local health checks must not go through a company's HTTP proxy.
@@ -33,7 +37,7 @@ def wait_ready(process,timeout=90):
   time.sleep(.5)
  raise RuntimeError(startup_failure(process)+' Readiness check: '+last)
 def python_start(folder):
- env=dict(os.environ);env.pop('PYTHONHOME',None);env.pop('PYTHONPATH',None);env.pop('TITLEVISION_DATA',None);env.pop('TITLEVISION_NODE',None);env['TITLEVISION_PORT']='8765'
+ env=dict(os.environ);env.pop('PYTHONHOME',None);env.pop('PYTHONPATH',None);env.pop('TITLEVISION_DATA',None);env.pop('TITLEVISION_NODE',None);env['TITLEVISION_PORT']='8765';env['LOCALAPPDATA']=str(data.parent.parent)
  logs=data/'updates';logs.mkdir(exist_ok=True)
  log=logs/('startup-'+uuid.uuid4().hex+'.log')
  with open(log,'ab') as output:

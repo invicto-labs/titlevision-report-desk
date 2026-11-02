@@ -5,6 +5,15 @@ from unittest.mock import patch,MagicMock
 testdata=Path(__file__).resolve().parent/'results'/uuid.uuid4().hex;testdata.mkdir(parents=True);os.environ['TITLEVISION_DATA']=str(testdata)
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]));import server
 class ServerTests(unittest.TestCase):
+ def test_installed_engine_ignores_redirected_localappdata(self):
+  root=Path('C:/Users/Example/AppData/Local/Programs/TitleVision Report Desk/versions/1.4.26/app')
+  expected=Path('C:/Users/Example/AppData/Local/TitleVision Report Desk/data').resolve()
+  self.assertEqual(server.data_location(root,True,{'LOCALAPPDATA':'C:/isolated/old-data'}),expected)
+  self.assertEqual(server.data_location(root,True,{'TITLEVISION_DATA':str(testdata),'LOCALAPPDATA':'C:/isolated/old-data'}),testdata.resolve())
+ def test_source_and_uninstalled_portable_keep_their_data_locations(self):
+  root=Path('C:/work/report/app')
+  self.assertEqual(server.data_location(root,False,{}),(root/'data').resolve())
+  self.assertEqual(server.data_location(root,True,{'LOCALAPPDATA':'C:/Users/Example/AppData/Local'}),Path('C:/Users/Example/AppData/Local/TitleVision Report Desk/data').resolve())
  @classmethod
  def setUpClass(cls):
   server.initialize();cls.http=server.ReportHTTPServer(('127.0.0.1',0),server.Handler);server.PORT=cls.http.server_port;cls.url=f'http://127.0.0.1:{server.PORT}';threading.Thread(target=cls.http.serve_forever,daemon=True).start()

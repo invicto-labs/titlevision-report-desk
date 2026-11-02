@@ -10,6 +10,9 @@ activation=importlib.util.module_from_spec(spec)
 with patch.dict(os.environ,{'LOCALAPPDATA':str(TEST)}):spec.loader.exec_module(activation)
 
 class ActivationTests(unittest.TestCase):
+ def test_installed_activation_uses_launcher_store(self):
+  root=Path('C:/Users/Example/AppData/Local/Programs/TitleVision Report Desk/versions/1.4.26')
+  self.assertEqual(activation.data_location(root,{'LOCALAPPDATA':'C:/isolated/old-data'}),Path('C:/Users/Example/AppData/Local/TitleVision Report Desk/data'))
  def setUp(self):activation.result_file=None
  def test_attempt_result_retains_actual_error(self):
   result=TEST/('attempt-'+uuid.uuid4().hex+'.json')

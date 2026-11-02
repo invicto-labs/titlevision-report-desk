@@ -1,3 +1,10 @@
+## Version 1.4.26
+
+- Keep installed desktop and scheduled engines on the same verified data store as the installed launcher, even when Windows helpers inherit a redirected LOCALAPPDATA environment.
+- Derive the normal installed data directory from the versioned installation location. Preserve explicit TITLEVISION_DATA overrides for development and recovery, and keep portable ZIP/source behavior unchanged.
+- Use the same stable directory for update activation status and normalize LOCALAPPDATA for the activated engine.
+- Add regressions for redirected environments and normal source/portable launches. No databases or reports are automatically replaced or reset.
+
 ## Version 1.4.25
 
 - Fix repeated shared workbook publication failures when Windows/SMB allows writing but denies replacing an existing file by rename.

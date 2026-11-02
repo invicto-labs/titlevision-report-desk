@@ -15,7 +15,15 @@ import state_store
 from operation_control import configure,check_cancelled,Cancelled
 ROOT=Path(__file__).resolve().parent
 PORTABLE=(ROOT/'portable.json').exists()
-DATA=Path(os.environ.get('TITLEVISION_DATA',Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'TitleVision Report Desk/data' if PORTABLE else ROOT/'data')).resolve();DATA.mkdir(parents=True,exist_ok=True)
+def data_location(root, portable, environment):
+ override=environment.get('TITLEVISION_DATA')
+ if override:return Path(override).resolve()
+ # The installed launcher lives under Local/Programs. An inherited LOCALAPPDATA
+ # from a sandbox or helper must not select a different, older report database.
+ if portable and root.parent.parent.name=='versions' and root.parents[2].name=='TitleVision Report Desk' and root.parents[3].name=='Programs':
+  return (root.parents[4]/'TitleVision Report Desk/data').resolve()
+ return (Path(environment.get('LOCALAPPDATA',str(Path.home())))/'TitleVision Report Desk/data' if portable else root/'data').resolve()
+DATA=data_location(ROOT,PORTABLE,os.environ);DATA.mkdir(parents=True,exist_ok=True)
 PORT=int(os.environ.get('TITLEVISION_PORT','8765'));IST=timezone(timedelta(hours=5,minutes=30));TOKEN=secrets.token_urlsafe(32)
 STORE=state_store.Store(DATA)
 INITIALIZED=False
