@@ -1,3 +1,10 @@
+## Version 1.4.27
+
+- Timed-out order checks retry after 5 and 15 seconds. If collection still times out, the same run can start a fresh browser after 1 minute and again after 5 minutes. A successful retry validates the export and publishes the monthly workbook automatically.
+- Report Desk reports rejected credentials directly and handles orders that display the order number in the heading or omit the client field.
+- The dashboard shows monthly and latest-day counts by status and point value. Sync now updates the selected month.
+- Repeated update products can be matched when the error note explicitly identifies the latest update and completion dates establish a unique match.
+
 ## Version 1.4.26
 
 - Keep installed desktop and scheduled engines on the same verified data store as the installed launcher, even when Windows helpers inherit a redirected LOCALAPPDATA environment.

@@ -7,22 +7,34 @@ let input='';for await(const c of process.stdin)input+=c;const job=JSON.parse(in
 const dir=path.resolve(job.directory);const emit=(phase,message,extra={})=>console.log(JSON.stringify({phase,message,...extra}));
 const BASE='https://tv.datatracetitle.com';let browser,activePage;const network=[];
 const normalize=s=>String(s??'').replace(/\u00a0/g,' ').trim();
+async function waitForOrderRetry(attempt,order){
+ const delay=attempt===0?5000:15000;
+ emit('history',`Order ${order} timed out. Retrying in ${delay/1000} seconds (attempt ${attempt+2} of 3).`);
+ await new Promise(resolve=>setTimeout(resolve,delay));
+}
 async function postback(page,locator){const response=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().includes('UserErrors.aspx'),{timeout:60000});await locator.click();await(await response).finished();await page.waitForLoadState('networkidle');}
 async function grid(page){const result=await page.locator('#_uec__gvUserErrors').evaluate(t=>({headers:[...t.querySelectorAll('th')].map(e=>e.innerText.trim()),empty:[...t.querySelectorAll('tr')].some(r=>r.cells.length===1&&/^No errors found[.!]?$/i.test(r.innerText.trim())),rows:[...t.querySelectorAll('tr')].filter(r=>r.querySelector('a[href*="OrderOverview.aspx"]')).map(r=>({values:[...r.cells].slice(1).map(c=>(c.innerText||'').replace(/\u00a0/g,' ').trim()),url:new URL(r.querySelector('a[href*="OrderOverview.aspx"]').getAttribute('href'),location.href).href,errorLinks:[...r.querySelectorAll('a')].map(a=>a.getAttribute('onclick')||a.getAttribute('href'))})),pages:[...t.querySelectorAll('a[href*="Page$"]')].map(a=>({text:a.innerText,href:a.getAttribute('href')}))}));for(const row of result.rows){row.sourceId=sourceErrorId(row.errorLinks,row.url);delete row.errorLinks;}return result;}
 try{
  emit('login','Signing in to TitleVision');
  browser=await chromium.launch({channel:'msedge',headless:!job.headed,...(job.headed?{args:['--start-minimized']}:{})});const context=await browser.newContext({acceptDownloads:true});const page=await context.newPage();activePage=page;page.setDefaultTimeout(30000);page.setDefaultNavigationTimeout(60000);
  context.on('response',r=>{const u=new URL(r.url());if(u.hostname==='tv.datatracetitle.com')network.push({path:u.pathname,status:r.status(),type:r.headers()['content-type'],disposition:r.headers()['content-disposition']});});
- await page.goto(BASE+'/UserErrors.aspx?ViewMode=full');
+ const errorsUrl=BASE+'/UserErrors.aspx?ViewMode=full';
+ await page.goto(errorsUrl,{waitUntil:'domcontentloaded'});
  if(new URL(page.url()).hostname==='login.datatracetitle.com'){
   await page.getByRole('textbox',{name:'Username',exact:true}).fill(job.username);
   await page.getByRole('textbox',{name:'Password',exact:true}).fill(job.password);
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
-  await page.waitForURL(u=>u.hostname==='tv.datatracetitle.com',{timeout:60000});
+  const signInResult = await Promise.any([
+   page.waitForURL(u=>u.hostname==='tv.datatracetitle.com',{waitUntil:'domcontentloaded',timeout:60000}).then(()=> 'signed-in'),
+   page.getByText('Invalid username or password. Please try again.',{exact:true})
+    .waitFor({state:'visible',timeout:60000}).then(()=> 'rejected')
+  ]).catch(()=> {throw Error('TitleVision sign-in did not complete within 60 seconds. Check whether you can sign in to TitleVision, then retry.');});
+  if(signInResult==='rejected')throw Error('TitleVision rejected the saved username or password. Open Settings > Sign-in, save your working TitleVision credentials, then retry.');
  }
- job.password='';emit('filters','Setting Created Date filters');await page.goto(BASE+'/UserErrors.aspx?ViewMode=full');
+ job.password='';emit('filters','Setting Created Date filters');
+ if(page.url()!==errorsUrl)await page.goto(errorsUrl,{waitUntil:'domcontentloaded'});
  await page.locator('#_uec__btnResetFilters').waitFor({state:'visible'});
- await page.locator('#_uec__btnResetFilters').click();await page.waitForLoadState('networkidle');
+ await postback(page,page.locator('#_uec__btnResetFilters'));
  await page.locator('#_uec__txtFilterErrorStartDate').fill(siteDate(job.start));
  await page.locator('#_uec__txtFilterErrorEndDate').fill(siteDate(plusDays(job.end,1)));
  // Read every status from the live site, including Accepted/Auto-Accepted and future additions.
@@ -86,9 +98,13 @@ try{
   for(let i=0;i<statusRows.length;i++){
    const row=statusRows[i];emit('history',`Checking new or changed status comments ${i+1} of ${statusRows.length}: ${row.values[1]}`);
    let lastError;
-   for(let attempt=0;attempt<2;attempt++)try{
+   for(let attempt=0;attempt<3;attempt++)try{
     activePage=statusPage;row.statusHistory=await readStatusHistory(statusPage,row,job.username);break;
-   }catch(e){lastError=e;}
+   }catch(e){
+    lastError=e;
+    if(e.name==='TimeoutError'&&attempt<2)await waitForOrderRetry(attempt,row.values[1]);
+    else if(attempt>=1)break;
+   }
    if(!row.statusHistory)throw Error(`${row.values[1]}: ${lastError?.message||'Status comments unavailable'}`);
   }
   await statusPage.close();activePage=page;
@@ -117,7 +133,7 @@ try{
   const row=rows[i],v=row.values;emit('history',`Checking ${i+1} of ${rows.length}: ${v[1]}`,{done:i,total:rows.length});
   if(new URL(row.url).origin!==BASE)throw Error('Unexpected order destination');
   let verified;let lastError;
-  for(let attempt=0;attempt<2;attempt++)try{
+  for(let attempt=0;attempt<3;attempt++)try{
    activePage=detail;await detail.goto(row.url);await detail.locator('#ctl00_ContentPlaceHolder1_grdWorkflowInstances_ctl00').waitFor();
    const productHeaders=await detail.locator('#ctl00_ContentPlaceHolder1_grdWorkflowInstances_ctl00 th').allTextContents();
    const expectedProductHeaders=['Product','External Product Number','Originator Product Number','Arrival Time','Completed Time','Cancelled Time'];
@@ -125,7 +141,15 @@ try{
    if(expectedProductHeaders.some(label=>normalizedHeaders.filter(h=>h===label).length!==1)){
     await fs.writeFile(path.join(dir,'product-headers.json'),JSON.stringify(productHeaders,null,2));throw Error('TitleVision product columns changed');
    }
-   const tv=normalize(await detail.locator('#ctl00_ContentPlaceHolder1_OrderWorkflowDetails1_lblServiceProviderOrderNumber').innerText());const client=normalize(await detail.locator('#ctl00_ContentPlaceHolder1_OrderWorkflowDetails1_lblOriginatorClient').innerText());
+   const orderLabels=await detail.locator('#ctl00_ContentPlaceHolder1_OrderWorkflowDetails1_lblServiceProviderOrderNumber').allInnerTexts();
+   let tv=normalize(orderLabels[0]);
+   if(!tv){
+    const heading=await detail.getByText(/^Order Details for:\s*[^\n]+$/i).allInnerTexts();
+    if(heading.length===1)tv=normalize(heading[0].replace(/^Order Details for:\s*/i,''));
+    if(!tv)throw Error('Cannot identify the TitleVision order number on the product page');
+   }
+   const clientLabels=await detail.locator('#ctl00_ContentPlaceHolder1_OrderWorkflowDetails1_lblOriginatorClient').allInnerTexts();
+   const client=normalize(clientLabels[0]);
    const indexes=Object.fromEntries(expectedProductHeaders.map(label=>[label,normalizedHeaders.indexOf(label)]));
    const products=await detail.locator('#ctl00_ContentPlaceHolder1_grdWorkflowInstances_ctl00').evaluate((t,ix)=>[...t.querySelectorAll('tr')].filter(r=>r.querySelector('a[href*="showUtilityControlsWFI"]')).map(r=>{const c=[...r.cells].map(c=>c.innerText.trim());const a=r.querySelector('a[href*="showUtilityControlsWFI"]');return {name:a.innerText.trim(),href:a.getAttribute('href'),external:c[ix['External Product Number']],originator:c[ix['Originator Product Number']],arrival:c[ix['Arrival Time']],completed:c[ix['Completed Time']],cancelled:c[ix['Cancelled Time']]};}),indexes);
    let selected;
@@ -142,7 +166,12 @@ try{
    }
    if(selected)verified={...await readProduct(selected.product,row,tv,client),selection:selected.method};
    break;
-  }catch(e){lastError=e;if(/Ambiguous product|Conflicting latest/.test(e.message))break;}
+  }catch(e){
+   lastError=e;
+   if(/Ambiguous product|Conflicting latest/.test(e.message))break;
+   if(e.name==='TimeoutError'&&attempt<2)await waitForOrderRetry(attempt,v[1]);
+   else if(attempt>=1)break;
+  }
   if(!verified)throw Error(`${v[1]}: ${lastError?.message||'History unavailable'}`);staff[row.id]=verified;
   await fs.writeFile(path.join(dir,'staff.json'),JSON.stringify(staff,null,2));
  }

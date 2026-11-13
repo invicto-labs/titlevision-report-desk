@@ -103,7 +103,7 @@ class ServerTests(unittest.TestCase):
      self.assertTrue(summary['available']);self.assertEqual(summary['total'],2);self.assertEqual(summary['points'],3)
      with urllib.request.urlopen(self.url+'/api/main/2026-10/current') as response:self.assertEqual(response.read(),before)
      with urllib.request.urlopen(self.url+'/api/main/2026-10/download') as response:self.assertEqual(response.read(),before)
-    with self.post('/api/shared/sync',{}) as response:self.assertIn('list refreshed',json.load(response)['message'])
+    with self.post('/api/shared/sync',{'month':'2026-09'}) as response:self.assertIn('list refreshed',json.load(response)['message'])
     sync.assert_not_called();publish.assert_not_called();self.assertEqual(file.read_bytes(),before)
     later=folder/'TitleVision Main Error Report - 2026-11.xlsx';later.write_bytes(before)
     self.assertEqual(server.public_state()['mainBooks'][0]['month'],'2026-11');later.unlink()
@@ -233,11 +233,11 @@ class ServerTests(unittest.TestCase):
    with server.db() as c:c.execute('DELETE FROM main_sync_state WHERE month=?',(month,))
  def test_failed_operation_releases_lock_for_next_request(self):
   with patch.object(server.shared_workbook,'configured',return_value='test-share'),patch.object(server.shared_workbook,'sync',side_effect=ValueError('Source unavailable')):
-   with self.assertRaises(urllib.error.HTTPError) as error:self.post('/api/shared/sync',{})
+   with self.assertRaises(urllib.error.HTTPError) as error:self.post('/api/shared/sync',{'month':'2026-09'})
    self.assertEqual(error.exception.code,400)
   self.assertFalse(server.worker_busy())
   with patch.object(server.shared_workbook,'configured',return_value='test-share'),patch.object(server.shared_workbook,'sync') as sync:
-   with self.post('/api/shared/sync',{}) as response:self.assertEqual(response.status,200)
+   with self.post('/api/shared/sync',{'month':'2026-09'}) as response:self.assertEqual(response.status,200)
    sync.assert_called_once()
  def test_static_health_state_and_unknown_routes(self):
   for path in ('/','/app.js','/style.css','/favicon.svg','/api/health','/api/state'):
@@ -270,8 +270,15 @@ class ServerTests(unittest.TestCase):
    finally:
     with server.db() as c:c.execute('DELETE FROM main_books WHERE month=?',(month,))
   with patch.object(server.shared_workbook,'configured',return_value='test-share'),patch.object(server.shared_workbook,'sync') as sync:
-   with self.post('/api/shared/sync',{}) as response:self.assertIn('Synchronized',json.load(response)['message'])
+   with self.post('/api/shared/sync',{'month':'2026-09'}) as response:self.assertIn('Synchronized',json.load(response)['message'])
    sync.assert_called_once()
+ def test_sync_now_only_accesses_selected_month(self):
+  with patch.object(server.shared_workbook,'configured',return_value='test-share'),patch.object(server.shared_workbook,'pull') as pull,patch.object(server.shared_workbook,'publish') as publish:
+   with patch.object(server.monthly_sync,'today',return_value=datetime(2026,11,11).date()),self.post('/api/shared/sync',{'month':'2026-11'}) as response:self.assertEqual(response.status,200)
+   pull.assert_called_once_with(server.ROOT,server.DATA,server.db,server.run_process,'2026-11')
+   publish.assert_called_once_with(server.DATA,server.db,'2026-11')
+   with self.assertRaises(urllib.error.HTTPError):self.post('/api/shared/sync',{})
+   self.assertEqual(pull.call_count,1)
  def test_completed_run_details_and_excel_download(self):
   rid=uuid.uuid4().hex;folder=server.DATA/'runs'/rid;folder.mkdir(parents=True)
   (folder/'issues.json').write_text('[]');file=folder/'report.xlsx';file.write_bytes(b'verified workbook')
@@ -504,6 +511,35 @@ class ServerTests(unittest.TestCase):
   try:
    with patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.history_cache,'remember'),patch.object(server.monthly_sync,'add',return_value={'choice':'yes'}) as add,patch.object(server.monthly_sync,'disputed_months',return_value=['2026-09']),patch.object(server.monthly_sync,'refresh',return_value={}) as refresh:
     server.perform(rid,lock)
+   self.assertEqual(add.call_args.args[-1],rid)
+   self.assertEqual(add.call_args.kwargs,{'refresh_existing':False})
+   refresh.assert_not_called()
+   with server.db() as c:
+    self.assertEqual(c.execute('SELECT status FROM runs WHERE id=?',(rid,)).fetchone()[0],'complete')
+    self.assertIsNone(c.execute('SELECT 1 FROM main_auto_pending WHERE run_id=?',(rid,)).fetchone())
+  finally:
+   with server.db() as c:c.execute('DELETE FROM runs WHERE id=?',(rid,));c.execute('DELETE FROM main_auto_pending WHERE run_id=?',(rid,))
+ def test_timed_out_collection_retries_then_publishes_once(self):
+  rid=uuid.uuid4().hex;folder=server.DATA/'runs'/rid
+  with server.db() as c:
+   c.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)',(rid,'2026-10-02','2026-10-04','queued','test','now',None,None,0,None))
+   c.execute('INSERT INTO main_auto_pending VALUES (?,?)',(rid,'now'))
+  attempts=[]
+  def process(args,directory,*a,**kw):
+   if str(args[1]).endswith('collector.mjs'):
+    attempts.append(directory)
+    if len(attempts)==1:
+     (directory/'source.xlsx').write_bytes(b'incomplete')
+     raise ValueError('Order A: locator.innerText: Timeout 30000ms exceeded.')
+    self.assertFalse((directory/'source.xlsx').exists())
+    self.assertEqual((directory/'timed-out-attempt-1/source.xlsx').read_bytes(),b'incomplete')
+   (directory/'issues.json').write_text('[]')
+   (directory/'validation.json').write_text(json.dumps({'passed':True,'count':2,'points':4}))
+  lock=MagicMock()
+  try:
+   with patch.object(server.time,'sleep'),patch.object(server,'publish_shared') as publish,patch.object(server,'credentials',return_value={'username':'test','password':'test'}),patch.object(server,'run_process',side_effect=process),patch.object(server.history_cache,'remember'),patch.object(server.monthly_sync,'add',return_value={'choice':'yes'}) as add,patch.object(server.monthly_sync,'disputed_months',return_value=['2026-09']),patch.object(server.monthly_sync,'refresh',return_value={}) as refresh:
+    server.perform(rid,lock)
+   self.assertEqual(attempts,[folder,folder]);publish.assert_called_once_with({'2026-10'});add.assert_called_once()
    self.assertEqual(add.call_args.args[-1],rid)
    self.assertEqual(add.call_args.kwargs,{'refresh_existing':False})
    refresh.assert_not_called()

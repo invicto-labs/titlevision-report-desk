@@ -198,14 +198,41 @@ def run_process(args,directory,stdin=None,progress=None,artifact_export=False):
   finished.set();monitor.join(timeout=10)
   for stream in (p.stdin,p.stdout):
    if stream and not stream.closed:stream.close()
+def collect_daily(run,directory,progress):
+ job=dict(credentials(),start=run['start'],end=run['end'],directory=str(directory),
+          historyCache=history_cache.prepare(DATA,directory))
+ # Retry within the original scheduled run so one verified output reaches the
+ # existing monthly publication queue, irrespective of the number of attempts.
+ for attempt,delay in enumerate((60,300,None),start=1):
+  check_cancelled()
+  try:
+   run_process([NODE,ROOT/'collector.mjs'],directory,job,progress)
+   return
+  except Cancelled:raise
+  except ValueError as error:
+   reason=str(error)
+   timed_out=('Timeout ' in reason and 'ms exceeded' in reason) or 'TitleVision sign-in did not complete within' in reason
+   if not timed_out or delay is None:raise
+   progress({'message':f'TitleVision timed out. Retrying automatically in {delay//60} min (attempt {attempt+1} of 3).'})
+   # Keep the failed attempt for diagnostics. Each new browser must produce
+   # its own source export and histories before reconciliation can start.
+   archive=directory/f'timed-out-attempt-{attempt}'
+   archive.mkdir()
+   for artifact in directory.iterdir():
+    if artifact.is_file() and artifact.name not in ('execution.log',Path(job['historyCache']).name):
+     artifact.rename(archive/artifact.name)
+   for second in range(delay):
+    check_cancelled()
+    time.sleep(1)
+
 def perform(rid,lock):
  directory=DATA/'runs'/rid;directory.mkdir(parents=True,exist_ok=True)
  try:
   with db() as c:run=dict(c.execute('SELECT * FROM runs WHERE id=?',(rid,)).fetchone())
-  cred=credentials();update(rid,status='running',message='Signing in to TitleVision')
+  update(rid,status='running',message='Signing in to TitleVision')
   def progress(event):
    if event.get('message'):update(rid,message=event['message'],**({'count':event['count'],'points':event['points']} if 'count' in event else {}))
-  run_process([NODE,ROOT/'collector.mjs'],directory,dict(cred,start=run['start'],end=run['end'],directory=str(directory),historyCache=history_cache.prepare(DATA,directory)),progress)
+  collect_daily(run,directory,progress)
   update(rid,message='Comparing every row with the downloaded source export')
   run_process([sys.executable,ROOT/'reconcile.py',directory],directory)
   history_cache.remember(DATA,directory)
@@ -474,9 +501,11 @@ class Handler(BaseHTTPRequestHandler):
     with RunLock():
      if UPDATES.busy():raise ValueError('Wait for the application update to finish.')
      if not shared_workbook.configured(db):raise ValueError('Choose a shared folder first.')
-     with db() as c:months=[r['month'] for r in main_workbook.books(c) if r['month']>='2026-09']
-     shared_workbook.sync(ROOT,DATA,db,run_process,months)
-    return self.send(200,{'message':f'Synchronized {len(months)} shared Main workbook(s).'})
+     month=obj.get('month')
+     if not isinstance(month,str):raise ValueError('Select a month in Error overview and click Sync now.')
+     monthly_sync.guard(month)
+     shared_workbook.sync(ROOT,DATA,db,run_process,[month])
+    return self.send(200,{'message':f'Synchronized the {month} shared Main workbook.'})
    if p.startswith('/api/runs/') and p.endswith('/main'):
     chunks=p.split('/')
     if len(chunks)!=5:raise ValueError('Invalid report URL')

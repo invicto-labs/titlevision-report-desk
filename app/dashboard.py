@@ -11,6 +11,7 @@ import main_workbook,report_layout,shared_workbook
 import shared_view
 
 TEAMS=('Search','Typing','VM Team','Leadership','Triage')
+STATUSES=('New','Disputed','Chargeable','Non-Chargeable','Accepted','Auto-Accepted')
 _cache={}
 _lock=threading.Lock()
 
@@ -36,9 +37,11 @@ def error_points(value):
     return points
 
 
-def totals(counts,points):
+def totals(counts,points,by_value,statuses):
     teams=[*TEAMS,*[extra for extra in ('Unassigned','Other') if counts[extra]]]
     return {'rows':[{'team':team,'count':counts[team],'points':float(points[team])} for team in teams],
+            'byStatus':{label:statuses[label] for label in (*STATUSES,*sorted(statuses.keys()-set(STATUSES)))},
+            'byPointValue':[{'value':float(value),'count':by_value[value]} for value in sorted({1,2,3}.union(by_value))],
             'total':sum(counts.values()),'points':float(sum(points.values(),Decimal(0)))}
 
 
@@ -79,7 +82,7 @@ def parse(content):
         if headers not in (report_layout.HEADERS,report_layout.PREVIOUS_HEADERS,report_layout.LEGACY_HEADERS):
             raise ValueError('Workbook columns changed. Keep the original SP 2 headers.')
         team_col=headers.index('Team');points_col=headers.index('Points');date_col=headers.index('Created Date')
-        counts=Counter();points=Counter();other=Counter();daily={}
+        counts=Counter();points=Counter();other=Counter();by_value=Counter();statuses=Counter();daily={}
         for row in iterator:
             # The empty workbook has a preformatted formula row. It is not an error.
             if row[1] in (None,''):
@@ -93,12 +96,17 @@ def parse(content):
             group=team if team in TEAMS else 'Unassigned' if not team else 'Other'
             amount=error_points(row[points_col]);day=error_day(row[date_col],wb.epoch)
             counts[group]+=1;points[group]+=amount
-            day_counts,day_points=daily.setdefault(day,(Counter(),Counter()))
+            by_value[amount]+=1
+            status=str(row[0] or '').strip() or 'No status'
+            statuses[status]+=1
+            day_counts,day_points,day_values,day_statuses=daily.setdefault(day,(Counter(),Counter(),Counter(),Counter()))
+            day_statuses[status]+=1
+            day_values[amount]+=1
             day_counts[group]+=1;day_points[group]+=amount
             if group=='Other':other[team]+=1
         latest=max(daily) if daily else None
-        return {**totals(counts,points),'otherTeams':dict(other),
-                'latest':{'date':latest,**totals(*(daily[latest] if latest else (Counter(),Counter())))}}
+        return {**totals(counts,points,by_value,statuses),'otherTeams':dict(other),
+                'latest':{'date':latest,**totals(*(daily[latest] if latest else (Counter(),Counter(),Counter(),Counter())))}}
     finally:wb.close()
 
 

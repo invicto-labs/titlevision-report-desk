@@ -108,3 +108,16 @@ test('poll recovery clears only its own warning and restores safe controls',asyn
  await h.run('refresh()');
  assert.equal(h.element('notice').textContent,'Your saved changes were accepted.');
 });
+
+test('overview defaults to current month and follows calendar rollover',()=>{
+ const h=harness();h.element('overview-month').value='2026-10';
+ h.run("state.phase2.currentMonth='2026-11';state.mainBooks.push({month:'2026-11'});overviewControls();");
+ assert.equal(h.element('overview-month').value,'2026-11');
+ h.run("overviewManualMonth='2026-10';overviewOptionKey='';overviewControls();");
+ assert.equal(h.element('overview-month').value,'2026-10');
+ h.run("state.phase2.currentMonth='2026-12';overviewControls();");
+ assert.equal(h.element('overview-month').value,'2026-12');
+ h.run('fetchOverview()');
+ assert.match(h.element('overview-status').textContent,/No workbook created for this month/);
+ assert.equal(h.element('team-total').textContent,'—');
+});

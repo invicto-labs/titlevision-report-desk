@@ -57,6 +57,22 @@ export function selectProduct(products,row){
   });
  }catch{dated=[];}
  if(dated.length===1)return {product:dated[0],method:'Only matching product whose work period overlaps Error Committed Date'};
+ // Some QC errors are committed after delivery and explicitly name the latest
+ // update report. Require complete dates and a unique latest completion before
+ // the committed date; an unfinished or overlapping update remains ambiguous.
+ if(!epon.length&&dated.length===0&&/\bupdate\b/i.test(clean(row[9]))&&/\blatest update report\b/i.test(clean(row[8]))){
+  try{
+   const [errorStart]=dateRange(row[17]);
+   const candidates=active.map(product=>{
+    const [arrival]=dateRange(product.arrival);
+    const [completed,completedEnd]=dateRange(product.completed);
+    if(completed<arrival||completedEnd>=errorStart)throw Error('Update timing is ambiguous');
+    return {product,completed};
+   }).sort((a,b)=>b.completed-a.completed);
+   if(candidates.length>1&&candidates[0].completed>candidates[1].completed)
+    return {product:candidates[0].product,method:'Error note explicitly identifies latest update report; unique latest completed update before committed date'};
+  }catch{ /* Keep the review requirement when dates cannot establish the latest update. */ }
+ }
  const error=Error(`Ambiguous product: ${matching.length} matching, ${active.length} non-cancelled. Error Committed Date did not identify one product. Review required.`);
  error.code='AMBIGUOUS_PRODUCT';error.candidates=dated.length>1?dated:[];throw error;
 }

@@ -10,11 +10,11 @@ import dashboard,report_layout
 class DashboardTests(unittest.TestCase):
  def setUp(self):
   self.temp=TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.file=Path(self.temp.name)/'report.xlsx';dashboard._cache.clear()
- def workbook(self,teams,headers=None,points=None,dates=None):
+ def workbook(self,teams,headers=None,points=None,dates=None,statuses=None):
   with xlsxwriter.Workbook(self.file) as wb:
    ws=wb.add_worksheet('SP 2');ws.write_row(0,0,headers or report_layout.HEADERS)
    for i,team in enumerate(teams,1):
-    row=['']*27;row[0]='New';row[1]='SAME-ORDER';row[3]=team;row[12]='CA';row[13]=points[i-1] if points is not None else 0;row[10]=dates[i-1] if dates is not None else '2026-10-01'
+    row=['']*27;row[0]=statuses[i-1] if statuses is not None else 'New';row[1]='SAME-ORDER';row[3]=team;row[12]='CA';row[13]=points[i-1] if points is not None else 0;row[10]=dates[i-1] if dates is not None else '2026-10-01'
     ws.write_row(i,0,row)
  def summary(self):
   with patch.object(dashboard,'workbook_path',return_value=(self.file,'shared')):return dashboard.summary(None,None,'2026-10')
@@ -53,6 +53,20 @@ class DashboardTests(unittest.TestCase):
   self.assertEqual(r['rows'][0]['points'],4.1)
   self.assertEqual(r['latest']['date'],'2026-10-03');self.assertEqual(r['latest']['total'],3);self.assertEqual(r['latest']['points'],4.2)
   self.assertEqual(r['latest']['rows'][2]['count'],1);self.assertEqual(r['latest']['rows'][2]['points'],0)
+ def test_point_value_counts_for_month_and_latest_date(self):
+  self.workbook(['Search']*6,points=[0,1,1,2,2.5,3],dates=['2026-11-01']*2+['2026-11-02']*4)
+  result=self.summary()
+  counts=lambda section:{r['value']:r['count'] for r in section['byPointValue']}
+  self.assertEqual(counts(result),{0:1,1:2,2:1,2.5:1,3:1})
+  self.assertEqual(counts(result['latest']),{1:1,2:1,2.5:1,3:1})
+  self.workbook([]);self.assertEqual(counts(self.summary()),{1:0,2:0,3:0})
+ def test_status_counts_include_all_errors_and_future_statuses(self):
+  self.workbook(['Search']*4,dates=['2026-11-01']*2+['2026-11-02']*2,statuses=['New','Disputed','Disputed','Pending review'])
+  r=self.summary()
+  self.assertEqual(r['byStatus'],{'New':1,'Disputed':2,'Chargeable':0,'Non-Chargeable':0,'Accepted':0,'Auto-Accepted':0,'Pending review':1})
+  self.assertEqual(r['latest']['byStatus']['Disputed'],1)
+  self.assertEqual(r['latest']['byStatus']['New'],0)
+  self.assertEqual(sum(r['latest']['byStatus'].values()),2)
  def test_numeric_excel_dates_and_empty_latest(self):
   self.workbook(['Search'],dates=[46296]);r=self.summary();self.assertEqual(r['latest']['date'],'2026-10-01')
   self.workbook([]);r=self.summary();self.assertIsNone(r['latest']['date']);self.assertEqual(r['points'],0);self.assertEqual(r['latest']['total'],0)

@@ -103,3 +103,16 @@ test('cancelled product keeps completion and date-only cancellation boundaries',
  products[2].completed='';row[17]='9/21/2026 11:59:59 PM';assert.equal(selectProduct(products,row).product,products[2]);
  row[17]='9/22/2026';assert.throws(()=>selectProduct(products,row));
 });
+
+test('explicit latest update note resolves a post-delivery error only with unique completed dates',()=>{
+ const row=Array(20).fill('');row[8]='Missed names in the Latest Update Report';row[9]='Update Preliminary Resale';row[17]='11/3/2026';row[18]='different-originator-number';
+ const products=[
+  {name:row[9],external:'001',arrival:'9/29/2026 11:35:57 AM',completed:'9/30/2026 11:44:02 AM',cancelled:''},
+  {name:row[9],external:'002',arrival:'10/30/2026 12:36:47 PM',completed:'11/2/2026 3:44:25 PM',cancelled:''}
+ ];
+ assert.equal(selectProduct(products,row).product.external,'002');
+ assert.throws(()=>selectProduct(products,{...row,8:'Missed names in report'}));
+ assert.throws(()=>selectProduct([products[0],{...products[1],arrival:''}],row));
+ assert.throws(()=>selectProduct([{...products[0],completed:products[1].completed},products[1]],row));
+ assert.match(selectProduct([products[0],{...products[1],completed:'11/3/2026 3:00:00 PM'}],row).method,/work period/);
+});

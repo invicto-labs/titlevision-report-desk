@@ -80,7 +80,16 @@ $('shared-form').onsubmit=async e=>{
  }catch(error){reportError(error);}
  finally{mainBusy=false;await refreshWithVersion();}
 };
-$('shared-sync').onclick=async()=>{if(preventBusyAction())return;mainBusy=true;mainBooksDisplay();notice(isViewer()?'Reading the shared workbook…':'Importing saved edits and updating the shared workbooks…');try{const result=await api('/api/shared/sync',{});overviewLast=0;notice(result.message);}catch(error){reportError(error);}finally{mainBusy=false;await refreshWithVersion();}};
+$('shared-sync').onclick=async()=>{
+ if(preventBusyAction())return;
+ const month=$('overview-month').value;
+ if(!isViewer()&&!state.mainBooks.some(book=>book.month===month)){notice('Choose an existing workbook in Error overview.');return;}
+ mainBusy=true;mainBooksDisplay();
+ notice(isViewer()?'Reading the shared workbook…':`Syncing the ${month} workbook…`);
+ try{const result=await api('/api/shared/sync',{month});overviewLast=0;notice(result.message);}
+ catch(error){reportError(error);}
+ finally{mainBusy=false;await refreshWithVersion();}
+};
 $('history').onclick=e=>{if(e.target.closest('a'))return;const row=e.target.closest('[data-id]');if(row)detail(state.runs.find(r=>r.id===row.dataset.id)).catch(e=>notice(e.message,true));};
 $('history').onkeydown=e=>{if(e.key==='Enter'){const row=e.target.closest('[data-id]');if(row)detail(state.runs.find(r=>r.id===row.dataset.id)).catch(e=>notice(e.message,true));}};
 function updateDisplay(){if(!state)return;$('app-version').textContent=state.version?'Running v'+state.version:'Version unavailable';const updating=['downloading','waiting','installing'].includes(state.update?.phase);$('get-update').disabled=checkingUpdate||updating;$('cancel-update').hidden=state.update?.phase!=='waiting';$('get-update').textContent=checkingUpdate?'Checking…':state.update?.phase==='waiting'?'Update queued':updating?'Updating…':'Get update';$('update-status').textContent=checkingUpdate?'Checking the latest published release…':updateMessage||state.update?.message||'Check for a published release.';$('github-state').textContent=state.githubAccessSaved?'GitHub update access is saved and encrypted.':'No token saved. An existing Git sign-in as invicto-labs will be used if available.';}
@@ -140,26 +149,52 @@ function chooseEditedWorkbook(month){
 $('create-main-form').onsubmit=e=>{e.preventDefault();manageMain('create',$('main-month').value);};
 $('main-books').onclick=e=>{const button=e.target.closest('button[data-action]');if(button)manageMain(button.dataset.action,button.dataset.month);};
 
-const overviewTeams=['Search','Typing','VM Team','Leadership','Triage'];
 let overviewLoading=false,overviewLast=0,overviewLoadedMonth='',overviewOptionKey='';
-function displaySummary(prefix,result){
- $(prefix+'counts').innerHTML=result.rows.map(r=>`<tr><td>${esc(r.team)}</td><td>${r.count.toLocaleString('en-IN')}</td><td>${r.points.toLocaleString('en-IN',{maximumFractionDigits:10})}</td></tr>`).join('');
- $(prefix+'total').textContent=result.total.toLocaleString('en-IN');
- $(prefix+'points').textContent=result.points.toLocaleString('en-IN',{maximumFractionDigits:10});
+let overviewManualMonth='',overviewCalendarMonth='';
+function teamComparison(month,day){
+ const monthly=new Map(month.map(row=>[row.team,row]));
+ const daily=new Map(day.map(row=>[row.team,row]));
+ const teams=new Set([...monthly.keys(),...daily.keys()]);
+ const number=value=>value.toLocaleString('en-IN',{maximumFractionDigits:10});
+ return [...teams].map(team=>{
+  const m=monthly.get(team),d=daily.get(team);
+  return `<tr><th scope="row">${esc(team)}</th><td>${number(m?.count??0)}</td><td>${number(m?.points??0)}</td><td>${number(d?.count??0)}</td><td>${number(d?.points??0)}</td></tr>`;
+ }).join('');
+}
+function renderBreakdown(result){
+ $('status-counts').innerHTML=Object.entries(result.byStatus).map(([status,count])=>
+  `<tr><th scope="row">${esc(status)}</th><td>${count.toLocaleString('en-IN')}</td><td>${(result.latest.byStatus[status]??0).toLocaleString('en-IN')}</td></tr>`
+ ).join('');
+ $('team-counts').innerHTML=teamComparison(result.rows,result.latest.rows);
+ const daily=new Map(result.latest.byPointValue.map(row=>[row.value,row.count]));
+ const ratings=[...result.byPointValue].sort((a,b)=> (a.value===0)-(b.value===0)||a.value-b.value);
+ $('point-counts').innerHTML=ratings.map(({value,count})=>
+  `<tr><th scope="row">${esc(value)}-point errors</th><td>${count.toLocaleString('en-IN')}</td><td>${(daily.get(value)??0).toLocaleString('en-IN')}</td></tr>`
+ ).join('');
 }
 function overviewEmpty(message){
- for(const prefix of ['team-','latest-team-']){ $(prefix+'counts').innerHTML=overviewTeams.map(team=>`<tr><td>${team}</td><td>—</td><td>—</td></tr>`).join('');$(prefix+'total').textContent='—';$(prefix+'points').textContent='—'; }
- $('latest-summary-date').textContent=message;
- $('team-total').textContent='—';$('overview-status').textContent=message;$('overview-status').className='muted unavailable';
+ $('status-counts').innerHTML='';
+ $('point-counts').innerHTML='';
+ $('team-counts').innerHTML='';
+ for(const id of ['team-total','team-points','latest-team-total','latest-team-points'])$(id).textContent='—';
+ $('latest-summary-date').textContent='';
+
+ $('overview-status').textContent=message;$('overview-status').className='muted unavailable';
  $('overview-download').hidden=true;$('overview-warning').hidden=true;
 }
 function overviewControls(){
- const books=state?.mainBooks||[],key=books.map(b=>b.month).join(',');
+ const books=state?.mainBooks||[],currentMonth=state?.phase2?.currentMonth||'';
+ if(currentMonth!==overviewCalendarMonth){overviewManualMonth='';overviewCalendarMonth=currentMonth;}
+ const months=[...new Set([currentMonth,...books.map(b=>b.month)].filter(Boolean))].sort().reverse();
+ const key=currentMonth+'|'+months.join(',');
  if(key!==overviewOptionKey||!$('overview-month').value){
-  const previous=$('overview-month').value;overviewOptionKey=key;
-  $('overview-month').innerHTML=books.length?books.map(b=>`<option value="${esc(b.month)}">${esc(new Date(b.month+'-01T12:00:00').toLocaleDateString('en-IN',{month:'long',year:'numeric'}))}</option>`).join(''):'<option value="">No workbook yet</option>';
-  $('overview-month').value=books.some(b=>b.month===previous)?previous:books.some(b=>b.month===state.phase2?.currentMonth)?state.phase2.currentMonth:books[0]?.month||'';
+  overviewOptionKey=key;
+  $('overview-month').innerHTML=months.length?months.map(month=>`<option value="${esc(month)}">${esc(new Date(month+'-01T12:00:00').toLocaleDateString('en-IN',{month:'long',year:'numeric'}))}</option>`).join(''):'<option value="">No workbook yet</option>';
+  $('overview-month').value=months.includes(overviewManualMonth)?overviewManualMonth:currentMonth||months[0]||'';
+  if(overviewLoadedMonth!==$('overview-month').value)overviewEmpty('Reading workbook…');
  }
+ const selectedMonth=$('overview-month').value;
+ $('month-label').textContent=selectedMonth?new Date(selectedMonth+'-01T12:00:00').toLocaleDateString('en-IN',{month:'long',year:'numeric'}):'Selected month';
  $('header-schedule').textContent=isViewer()?'Viewer PC · Shared Excel':state.schedule?'Scheduled · 8:45 AM weekdays':'Automatic collection paused';
  $('operation-state').hidden=!(state.activity?.busy||mainBusy||pending);$('operation-state').textContent=state.activity?.busy?'Working · '+state.activity.message+' — Your last saved workbook remains available while this finishes.':mainBusy||pending?'Starting your request…':'';
  if(busyNotice){notice(state.activity?.busy?'Work is in progress. '+state.activity.message:'The previous operation has finished. You can start your next action.');busyNotice=Boolean(state.activity?.busy);}
@@ -173,6 +208,7 @@ async function fetchOverview(force=false){
  if(!state||overviewLoading)return;
  const month=$('overview-month').value;
  if(!month)return;
+ if(!state.mainBooks.some(book=>book.month===month)){overviewEmpty('No workbook created for this month yet.');return;}
  if(!force&&overviewLoadedMonth===month&&Date.now()-overviewLast<15000)return;
  overviewLoading=true;overviewLast=Date.now();$('overview-reload').disabled=true;
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
@@ -186,11 +222,14 @@ async function fetchOverview(force=false){
   for(const section of [result,result.latest]){
    if(section.rows.reduce((n,r)=>n+r.count,0)!==section.total||Math.abs(section.rows.reduce((n,r)=>n+r.points,0)-section.points)>1e-8)throw Error('Team totals do not match the workbook.');
   }
-  displaySummary('team-',result);displaySummary('latest-team-',result.latest);
+  renderBreakdown(result);
+  for(const [prefix,section] of [['team-',result],['latest-team-',result.latest]]){
+   $(prefix+'total').textContent=section.total.toLocaleString('en-IN');
+   $(prefix+'points').textContent=section.points.toLocaleString('en-IN',{maximumFractionDigits:10});
+  }
   $('latest-summary-date').textContent=result.latest.date?new Date(result.latest.date+'T12:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'}):'No error dates in this workbook';
   $('overview-status').className='muted';$('overview-status').textContent='Saved '+new Date(result.savedAt*1000).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',dateStyle:'medium',timeStyle:'short'});
   $('overview-download').href='/api/main/'+encodeURIComponent(month)+'/current';$('overview-download').hidden=false;
-  $('overview-source').textContent=(result.source==='shared'?'Shared Excel':'Main Excel')+' · Counts check for saved changes every 15 seconds. Unsaved Excel edits appear after saving.';
   const extra=result.rows.filter(r=>['Unassigned','Other'].includes(r.team));
   $('overview-warning').hidden=!extra.length;$('overview-warning').textContent=extra.length?'Unassigned or other team values are included so the total matches every error row in SP 2.':'';
  }catch(error){
@@ -200,7 +239,7 @@ async function fetchOverview(force=false){
   if($('overview-month').value!==month)fetchOverview(true);
  }
 }
-$('overview-month').onchange=()=>{overviewEmpty('Reading workbook…');overviewLoadedMonth='';fetchOverview(true);};
+$('overview-month').onchange=()=>{overviewManualMonth=$('overview-month').value;overviewEmpty('Reading workbook…');overviewLoadedMonth='';fetchOverview(true);};
 $('overview-reload').onclick=()=>fetchOverview(true);
 $('overview-refresh-status').onclick=()=>manageMain('refresh',$('overview-month').value);
 

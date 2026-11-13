@@ -20,3 +20,43 @@ select:focus-visible,button:focus-visible,a:focus-visible,summary:focus-visible{
 .team-table th:not(:first-child),.team-table td:not(:first-child){text-align:right;font-variant-numeric:tabular-nums;width:24%}.team-table tbody td:not(:first-child){font-weight:600}
 
 .operation-bar{display:flex;align-items:center;gap:16px;justify-content:space-between}.operation-bar .hint{flex:1}.stop-button{color:#a52b31;border-color:#d9a9ac;flex-shrink:0}.badge.cancelled{background:#edf0f3;color:#526171}
+
+/* Monthly and daily counts share team labels and a single workbook toolbar. */
+.comparison{padding:22px 24px 16px}
+.comparison .comparison-table{margin:18px 0 0;width:100%;font-variant-numeric:tabular-nums}
+.comparison-table th,.comparison-table td{padding:9px 14px;text-align:right;font-size:14px}
+.comparison-table thead th{color:#405669;text-transform:none;letter-spacing:0;background:#f3f6f8;font-size:12px}
+.comparison-table thead tr:first-child th[colspan]{text-align:center;border-bottom:1px solid #dde5ea}
+.comparison-table thead tr:first-child th:last-child,.comparison-table thead tr:nth-child(2) th:nth-child(3),.comparison-table tr>:nth-child(4){border-left:1px solid #dde5ea}
+.comparison-table tr>:first-child:not([colspan]){text-align:left}
+.comparison-table thead tr:nth-child(2)>th:first-child{text-align:right}
+.comparison-table tbody th{background:white;text-transform:none;letter-spacing:0;font-weight:500;border-bottom:1px solid #e6ecf1;color:#263443}
+.comparison-table tbody td{width:16%}
+.comparison-table tfoot>* >*{background:#e6f2ef;color:#135a53;border:0;font-weight:700;font-size:17px}
+.comparison-table #latest-summary-date{display:inline-block;margin-left:5px;font-weight:400}
+.comparison .overview-actions{margin-top:18px}.comparison .overview-actions .quiet{margin-left:auto}
+.disclosure>summary{padding:14px 20px}.overview-heading{margin-bottom:16px}.overview-heading h1{margin:0}
+@media(max-width:600px){.comparison{padding:16px 12px}.comparison-table th,.comparison-table td{padding:8px 5px}.comparison-table #latest-summary-date{display:block;margin:2px 0}.comparison .overview-actions{display:grid;grid-template-columns:1fr 1fr}.comparison .overview-actions .quiet{margin:0}.overview-heading{flex-direction:row;align-items:center}.overview-heading h1{font-size:23px}.month-picker{width:auto;min-width:120px}}
+
+.group-picker{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#526477}
+.group-picker select{margin:0;width:auto;padding:5px 8px}
+
+main{max-width:980px}.overview-heading h1{font-size:32px;font-weight:650}.month-picker{font-size:14px}.month-picker select{font-size:16px;min-height:44px}
+.simple-overview{padding:0;overflow:hidden;border-radius:16px;border-color:#ccdcd7}
+.headline-pair{display:grid;grid-template-columns:1fr 1fr;background:#edf5f1}
+.headline-pair section{padding:22px 28px}.headline-pair section:first-child{background:#18483f;color:#fff}
+.headline-pair h2{font-weight:600;font-size:18px;margin:0}.headline-pair h2 span{display:inline-block;font-size:15px;font-weight:500}
+.big-count{font-size:20px;line-height:1.15;margin:9px 0 6px}.big-count strong{font-size:clamp(38px,5vw,55px);font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-1.5px}.point-total{font-size:16px}.point-total strong{font-weight:600}
+.summary-body{padding:22px 28px 10px}.summary-body>h2{font-size:21px}
+.point-list{margin-top:12px;font-size:18px;font-variant-numeric:tabular-nums}.point-list th,.point-list td{padding:9px 12px}
+.point-list thead th{font-size:14px;text-transform:none;letter-spacing:0;background:#f2f5f4;color:#364f49}
+.point-list tbody th{background:white;font-size:16px;letter-spacing:0;text-transform:none;font-weight:500;color:#293d37;border-bottom:1px solid #e6ecf1}
+.point-list tr>:not(:first-child){width:25%;text-align:right}.point-list td{font-weight:650}.team-details summary,.disclosure>summary{font-size:16px;padding:13px 0}.team-details summary{color:#155d51}.disclosure>summary{padding:15px 20px}
+.simple-overview .overview-actions{border-top:1px solid var(--line);margin:0;padding:15px 0 4px}.overview-actions button,.overview-actions a,.save-line button{min-height:44px;font-size:16px}.save-line{display:flex;gap:12px;justify-content:space-between;align-items:center;font-size:14px;color:#465b55}.save-line button{font-size:14px}.save-line .unavailable{color:#8e3b24}
+@media(max-width:600px){.simple-overview{padding:0}.headline-pair section{padding:16px 12px}.headline-pair h2{font-size:16px}.headline-pair h2 span{display:block;font-size:14px}.summary-body{padding:18px 12px 8px}.point-list th,.point-list td{padding:10px 5px}.simple-overview .overview-actions{display:flex;flex-wrap:wrap}.simple-overview .overview-actions>*{flex:1 1 auto;font-size:15px}.save-line{flex-wrap:wrap}.overview-heading h1{font-size:26px}}
+
+.breakdown-grid{display:grid;grid-template-columns:1fr 1fr;gap:30px}
+.breakdown-grid section{min-width:0}.breakdown-grid h2{font-size:20px}
+.breakdown-grid .point-list th,.breakdown-grid .point-list td{padding:9px 8px}
+.breakdown-grid tbody th{overflow-wrap:anywhere}
+@media(max-width:800px){.breakdown-grid{grid-template-columns:1fr;gap:20px}}
